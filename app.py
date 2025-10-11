@@ -374,8 +374,8 @@ def fetch_option_chain():
             setInterval(refreshPositions, 1000);
             setInterval(refreshMovers, 5000);
             setInterval(refreshPricePatterns, 5000);
-            refreshMovers(); // Initial load
-            refreshPricePatterns(); // Initial load
+            refreshMovers();
+            refreshPricePatterns();
         </script>
     </body>
     </html>
@@ -395,7 +395,6 @@ def place_order():
     symbol = nifty50_stocks[stock_name]
     
     try:
-        # Get current LTP
         quote_data = {"symbols": symbol}
         response = fyers.quotes(data=quote_data)
         
@@ -406,7 +405,6 @@ def place_order():
         if ltp is None:
             return jsonify({"success": False, "message": "Could not fetch LTP"})
         
-        # Add position
         position = {
             "stock": stock_name,
             "symbol": symbol,
@@ -432,7 +430,6 @@ def get_positions():
     if not positions:
         return jsonify({"positions": ""})
     
-    # Get current LTPs for all positions
     symbols = list(set([p["symbol"] for p in positions]))
     ltp_map = {}
     
@@ -449,14 +446,13 @@ def get_positions():
     except Exception as e:
         print(f"Error fetching LTPs: {e}")
     
-    # Generate positions HTML
     positions_html = ""
     for pos in positions:
         current_ltp = ltp_map.get(pos["symbol"], pos["entry_ltp"])
         
         if pos["type"] == "BUY":
             profit = current_ltp - pos["entry_ltp"]
-        else:  # SELL
+        else:
             profit = pos["entry_ltp"] - current_ltp
         
         profit_class = "profit-positive" if profit >= 0 else "profit-negative"
@@ -484,7 +480,6 @@ def get_movers():
                        "losers": "<tr><td colspan='4'>Please login first</td></tr>"})
     
     try:
-        # Fetch quotes for all NIFTY 50 stocks
         symbols = ",".join(nifty50_stocks.values())
         quote_data = {"symbols": symbols}
         response = fyers.quotes(data=quote_data)
@@ -493,7 +488,6 @@ def get_movers():
             return jsonify({"gainers": "<tr><td colspan='4'>No data</td></tr>", 
                            "losers": "<tr><td colspan='4'>No data</td></tr>"})
         
-        # Process stock data
         stock_data = []
         for item in response["d"]:
             try:
@@ -521,10 +515,8 @@ def get_movers():
             except Exception as e:
                 continue
         
-        # Sort by change percentage
         stock_data.sort(key=lambda x: x["change_pct"], reverse=True)
         
-        # Top 5 gainers
         gainers = stock_data[:5]
         gainers_html = ""
         for i, stock in enumerate(gainers, 1):
@@ -537,7 +529,6 @@ def get_movers():
             </tr>
             """
         
-        # Top 5 losers
         losers = stock_data[-5:][::-1]
         losers_html = ""
         for i, stock in enumerate(losers, 1):
@@ -567,7 +558,6 @@ def get_price_patterns():
         })
     
     try:
-        # Fetch quotes for all NIFTY 50 stocks
         symbols = ",".join(nifty50_stocks.values())
         quote_data = {"symbols": symbols}
         response = fyers.quotes(data=quote_data)
@@ -578,7 +568,6 @@ def get_price_patterns():
                 "open_high": "<tr><td colspan='5'>No data</td></tr>"
             })
         
-        # Process stock data
         open_low_stocks = []
         open_high_stocks = []
         
@@ -606,8 +595,7 @@ def get_price_patterns():
                 
                 change_pct = ((ltp - prev_close) / prev_close) * 100 if prev_close else 0
                 
-                # Check if Open = Low (with 0.1% tolerance)
-                tolerance = open_price * 0.001  # 0.1% tolerance
+                tolerance = open_price * 0.001
                 if abs(open_price - low) <= tolerance:
                     open_low_stocks.append({
                         "name": stock_name,
@@ -617,7 +605,6 @@ def get_price_patterns():
                         "change_pct": change_pct
                     })
                 
-                # Check if Open = High (with 0.1% tolerance)
                 if abs(open_price - high) <= tolerance:
                     open_high_stocks.append({
                         "name": stock_name,
@@ -630,11 +617,9 @@ def get_price_patterns():
             except Exception as e:
                 continue
         
-        # Sort by change percentage
         open_low_stocks.sort(key=lambda x: x["change_pct"], reverse=True)
         open_high_stocks.sort(key=lambda x: x["change_pct"])
         
-        # Generate HTML for Open = Low stocks
         open_low_html = ""
         if open_low_stocks:
             for stock in open_low_stocks:
@@ -652,7 +637,6 @@ def get_price_patterns():
         else:
             open_low_html = "<tr><td colspan='5'>No stocks with Open = Low pattern</td></tr>"
         
-        # Generate HTML for Open = High stocks
         open_high_html = ""
         if open_high_stocks:
             for stock in open_high_stocks:
@@ -716,7 +700,6 @@ def get_equity_details(stock_name):
     symbol = nifty50_stocks[stock_name]
     
     try:
-        # Fetch quote data
         quote_data = {"symbols": symbol}
         response = fyers.quotes(data=quote_data)
         
@@ -776,13 +759,11 @@ def get_equity_details(stock_name):
 def generate_rows(stock_name):
     global fyers
     
-    # Get the stock symbol
     if stock_name not in nifty50_stocks:
         return "", "", "<p>Invalid stock name.</p>", "", "", ""
     
     symbol = nifty50_stocks[stock_name]
     
-    # Fetch option chain data
     data = {"symbol": symbol, "strikecount": 50}
     response = fyers.optionchain(data=data)
     
@@ -804,7 +785,6 @@ def generate_rows(stock_name):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Get spot price
     spot_price = None
     for key in ("underlying_value", "underlyingValue", "underlying", "underlying_value_instrument"):
         if data_section.get(key) is not None:
@@ -818,7 +798,6 @@ def generate_rows(stock_name):
     if spot_price is None:
         spot_price = float(strikes_all[len(strikes_all)//2]) if strikes_all else 0
 
-    # Find ATM strike and show ±3 strikes
     atm_strike = min(strikes_all, key=lambda s: abs(s - spot_price)) if strikes_all else 0
     atm_index = strikes_all.index(atm_strike) if atm_strike in strikes_all else 0
     low = max(0, atm_index - 3)
@@ -830,7 +809,6 @@ def generate_rows(stock_name):
     pe_df = df[df["option_type"] == "PE"].set_index("strike_price", drop=False) if "option_type" in df.columns else pd.DataFrame()
     lr_cols = [c for c in ["ask", "bid", "ltp", "ltpch", "oi", "oich", "oichp", "prev_oi", "volume"] if c in df.columns]
 
-    # Filter ITM options
     ce_itm_df = ce_df[ce_df["strike_price"] < spot_price] if not ce_df.empty else pd.DataFrame()
     pe_itm_df = pe_df[pe_df["strike_price"] > spot_price] if not pe_df.empty else pd.DataFrame()
 
@@ -842,7 +820,6 @@ def generate_rows(stock_name):
             ce_val = ce_df.loc[strike, c] if (not ce_df.empty and strike in ce_df.index and c in ce_df.columns) else ""
             pe_val = pe_df.loc[strike, c] if (not pe_df.empty and strike in pe_df.index and c in pe_df.columns) else ""
             
-            # Format values
             if ce_val != "" and not pd.isna(ce_val):
                 ce_val = f"{ce_val:,.2f}" if c in ["ltp", "ltpch", "ask", "bid"] else f"{ce_val:,.0f}"
             else:
@@ -859,7 +836,6 @@ def generate_rows(stock_name):
         row_style = "style='background-color: #ffeb3b; font-weight: bold;'" if strike == atm_strike else ""
         rows_html += f"<tr {row_style}>{ce_cells}<td><b>{strike}</b></td>{pe_cells}</tr>"
 
-    # Calculate totals
     ce_totals = ce_df[lr_cols].sum(numeric_only=True) if not ce_df.empty else pd.Series(0, index=lr_cols)
     pe_totals = pe_df[lr_cols].sum(numeric_only=True) if not pe_df.empty else pd.Series(0, index=lr_cols)
     ce_itm_totals = ce_itm_df[lr_cols].sum(numeric_only=True) if not ce_itm_df.empty else pd.Series(0, index=lr_cols)
@@ -918,6 +894,8 @@ def generate_market_insights(ce_df, pe_df, spot_price, stock_name):
             else:
                 trend_bias = "Neutral ⚖️"
 
+        trading_recommendations = generate_trading_recommendations(ce_df, pe_df, spot_price, pcr)
+
         return f"""
         <h3>🔎 Market Insights for {stock_name}</h3>
         <ul>
@@ -930,16 +908,254 @@ def generate_market_insights(ce_df, pe_df, spot_price, stock_name):
             <li><b>Strongest Resistance (CE OI):</b> ₹{strongest_resistance if strongest_resistance else 'N/A'}</li>
             <li><b>Trend Bias:</b> {trend_bias}</li>
         </ul>
+
+        {trading_recommendations}
+
+        <h4>Product by Mohammed Kareemuddin Sajid Shaikh</h4>
         """
     except Exception as e:
         return f"<p>Error in analysis: {e}</p>"
 
+def generate_trading_recommendations(ce_df, pe_df, spot_price, pcr):
+    try:
+        recommendations = "<h3>🎯 Trading Recommendations</h3>"
+
+        if pcr and pcr > 1.2:
+            market_direction = "BEARISH"
+        elif pcr and pcr < 0.8:
+            market_direction = "BULLISH"
+        else:
+            market_direction = "SIDEWAYS"
+
+        recommendations += f"<h4>📈 Market Direction: {market_direction}</h4>"
+
+        live_signals = generate_live_signals(ce_df, pe_df, spot_price, pcr, market_direction)
+        best_strikes = find_best_trading_strikes(ce_df, pe_df, spot_price, market_direction)
+        time_recommendation = get_time_recommendation()
+        ltp_analysis = analyze_ltp_targets(ce_df, pe_df, spot_price, market_direction)
+
+        recommendations += f"""
+        <div style='background: #ff6b6b; color: white; padding: 15px; border-radius: 5px; margin: 10px 0; border: 2px solid #ff5252;'>
+            <h4>🚨 LIVE TRADING SIGNALS 🚨</h4>
+            {live_signals}
+        </div>
+
+        <div style='background: #f0f8ff; padding: 10px; border-radius: 5px; margin: 10px 0;'>
+            <h4>🏆 Best Strikes to Trade:</h4>
+            {best_strikes}
+        </div>
+
+        <div style='background: #f5f5dc; padding: 10px; border-radius: 5px; margin: 10px 0;'>
+            <h4>⏰ Best Time to Trade:</h4>
+            {time_recommendation}
+        </div>
+
+        <div style='background: #f0fff0; padding: 10px; border-radius: 5px; margin: 10px 0;'>
+            <h4>💰 LTP Analysis & Targets:</h4>
+            {ltp_analysis}
+        </div>
+        """
+
+        return recommendations
+    except Exception as e:
+        return f"<p>Error in trading recommendations: {e}</p>"
+
+def generate_live_signals(ce_df, pe_df, spot_price, pcr, market_direction):
+    try:
+        current_time = datetime.now()
+        signal_time = current_time.strftime("%H:%M:%S")
+
+        signals = f"<div style='text-align: center; font-size: 14px; margin-bottom: 10px;'>"
+        signals += f"<b>🕒 Signal Time: {signal_time}</b><br>"
+        signals += f"<b>📍 Spot: ₹{spot_price}</b> | <b>PCR: {pcr}</b></div>"
+
+        if market_direction == "BULLISH":
+            if not ce_df.empty and "ltp" in ce_df.columns and "volume" in ce_df.columns:
+                ce_filtered = ce_df[(ce_df['ltp'] > 0) & (ce_df['volume'] > 100)].copy()
+                if not ce_filtered.empty:
+                    ce_filtered['signal_score'] = (
+                        ce_filtered['volume'] * 0.3 +
+                        ce_filtered.get('oich', 0) * 0.2 +
+                        (1000 / (abs(ce_filtered['strike_price'] - spot_price) + 1))
+                    )
+
+                    best_call = ce_filtered.loc[ce_filtered['signal_score'].idxmax()]
+
+                    if best_call.get('ltpch', 0) > 5 and best_call.get('oich', 0) > 10000:
+                        signal_type = "🟢 STRONG BUY"
+                        confidence = "HIGH"
+                    elif best_call.get('ltpch', 0) > 0 and best_call['volume'] > ce_filtered['volume'].median():
+                        signal_type = "🔵 BUY"
+                        confidence = "MEDIUM"
+                    else:
+                        signal_type = "🟡 WATCH"
+                        confidence = "LOW"
+
+                    entry_price = best_call['ltp']
+                    target1 = entry_price * 1.15
+                    target2 = entry_price * 1.30
+                    stop_loss = entry_price * 0.85
+
+                    signals += f"<div style='background: #4caf50; color: white; padding: 8px; border-radius: 3px; margin: 5px 0;'>"
+                    signals += f"<b>{signal_type}</b> | Confidence: <b>{confidence}</b><br>"
+                    signals += f"<b>📈 {int(best_call['strike_price'])} CE</b><br>"
+                    signals += f"Entry: ₹{entry_price:.2f} | T1: ₹{target1:.2f} | T2: ₹{target2:.2f}<br>"
+                    signals += f"Stop Loss: ₹{stop_loss:.2f} | Volume: {int(best_call['volume']):,}"
+                    signals += f"</div>"
+
+        elif market_direction == "BEARISH":
+            if not pe_df.empty and "ltp" in pe_df.columns and "volume" in pe_df.columns:
+                pe_filtered = pe_df[(pe_df['ltp'] > 0) & (pe_df['volume'] > 100)].copy()
+                if not pe_filtered.empty:
+                    pe_filtered['signal_score'] = (
+                        pe_filtered['volume'] * 0.3 +
+                        pe_filtered.get('oich', 0) * 0.2 +
+                        (1000 / (abs(pe_filtered['strike_price'] - spot_price) + 1))
+                    )
+
+                    best_put = pe_filtered.loc[pe_filtered['signal_score'].idxmax()]
+
+                    if best_put.get('ltpch', 0) > 5 and best_put.get('oich', 0) > 10000:
+                        signal_type = "🔴 STRONG SELL"
+                        confidence = "HIGH"
+                    elif best_put.get('ltpch', 0) > 0 and best_put['volume'] > pe_filtered['volume'].median():
+                        signal_type = "🟠 SELL"
+                        confidence = "MEDIUM"
+                    else:
+                        signal_type = "🟡 WATCH"
+                        confidence = "LOW"
+
+                    entry_price = best_put['ltp']
+                    target1 = entry_price * 1.15
+                    target2 = entry_price * 1.30
+                    stop_loss = entry_price * 0.85
+
+                    signals += f"<div style='background: #f44336; color: white; padding: 8px; border-radius: 3px; margin: 5px 0;'>"
+                    signals += f"<b>{signal_type}</b> | Confidence: <b>{confidence}</b><br>"
+                    signals += f"<b>📉 {int(best_put['strike_price'])} PE</b><br>"
+                    signals += f"Entry: ₹{entry_price:.2f} | T1: ₹{target1:.2f} | T2: ₹{target2:.2f}<br>"
+                    signals += f"Stop Loss: ₹{stop_loss:.2f} | Volume: {int(best_put['volume']):,}"
+                    signals += f"</div>"
+
+        else:
+            signals += f"<div style='background: #ff9800; color: white; padding: 8px; border-radius: 3px; margin: 5px 0;'>"
+            signals += f"<b>⚖️ SIDEWAYS MARKET</b><br>"
+            signals += f"<b>Strategy:</b> Iron Condor or Short Straddle<br>"
+            signals += f"<b>ATM Strike:</b> {int(spot_price)}<br>"
+            signals += f"<b>Action:</b> Wait for breakout or sell premium"
+            signals += f"</div>"
+
+        signals += f"<div style='background: #ffc107; color: black; padding: 5px; border-radius: 3px; margin: 10px 0; font-size: 11px;'>"
+        signals += f"⚠️ <b>DISCLAIMER:</b> Signals are based on technical analysis. Trade at your own risk."
+        signals += f"</div>"
+
+        return signals
+
+    except Exception as e:
+        return f"<p>Error generating live signals: {e}</p>"
+
+def find_best_trading_strikes(ce_df, pe_df, spot_price, market_direction):
+    try:
+        strikes_info = ""
+
+        if market_direction == "BULLISH":
+            if not ce_df.empty and "ltp" in ce_df.columns:
+                ce_df_sorted = ce_df[ce_df['ltp'] > 0].copy()
+                if not ce_df_sorted.empty:
+                    ce_df_sorted['score'] = (
+                        ce_df_sorted.get('volume', 0) * 0.3 +
+                        ce_df_sorted.get('oi', 0) * 0.0001
+                    )
+
+                    best_ce = ce_df_sorted.loc[ce_df_sorted['score'].idxmax()]
+                    strikes_info += f"<b>🔥 BEST CALL:</b> {int(best_ce['strike_price'])} CE<br>"
+                    strikes_info += f"Current LTP: ₹{best_ce['ltp']:.2f}<br><br>"
+
+        elif market_direction == "BEARISH":
+            if not pe_df.empty and "ltp" in pe_df.columns:
+                pe_df_sorted = pe_df[pe_df['ltp'] > 0].copy()
+                if not pe_df_sorted.empty:
+                    pe_df_sorted['score'] = (
+                        pe_df_sorted.get('volume', 0) * 0.3 +
+                        pe_df_sorted.get('oi', 0) * 0.0001
+                    )
+
+                    best_pe = pe_df_sorted.loc[pe_df_sorted['score'].idxmax()]
+                    strikes_info += f"<b>🔥 BEST PUT:</b> {int(best_pe['strike_price'])} PE<br>"
+                    strikes_info += f"Current LTP: ₹{best_pe['ltp']:.2f}<br><br>"
+
+        else:
+            strikes_info += f"<b>📊 SIDEWAYS STRATEGY:</b><br>"
+            strikes_info += f"• Consider Iron Condor or Butterfly spreads<br>"
+            strikes_info += f"• ATM Strike: ~{int(spot_price)}<br>"
+
+        return strikes_info
+    except Exception as e:
+        return f"Error finding best strikes: {e}"
+
+def get_time_recommendation():
+    current_time = datetime.now().time()
+
+    if datetime.now().time().replace(hour=9, minute=15) <= current_time <= datetime.now().time().replace(hour=10, minute=0):
+        return "🌅 <b>OPENING HOUR:</b> High volatility, good for momentum trades."
+    elif datetime.now().time().replace(hour=10, minute=0) <= current_time <= datetime.now().time().replace(hour=11, minute=30):
+        return "📈 <b>MORNING SESSION:</b> Trend establishment phase."
+    elif datetime.now().time().replace(hour=11, minute=30) <= current_time <= datetime.now().time().replace(hour=14, minute=0):
+        return "😴 <b>LUNCH TIME:</b> Lower volatility."
+    elif datetime.now().time().replace(hour=14, minute=0) <= current_time <= datetime.now().time().replace(hour=15, minute=0):
+        return "🔥 <b>AFTERNOON POWER:</b> High activity!"
+    elif datetime.now().time().replace(hour=15, minute=0) <= current_time <= datetime.now().time().replace(hour=15, minute=30):
+        return "⚡ <b>CLOSING HOUR:</b> Maximum volatility!"
+    else:
+        return "🌙 <b>MARKET CLOSED:</b> Use this time for analysis."
+
+def analyze_ltp_targets(ce_df, pe_df, spot_price, market_direction):
+    try:
+        analysis = ""
+
+        if market_direction == "BULLISH" and not ce_df.empty and "ltp" in ce_df.columns:
+            atm_calls = ce_df[abs(ce_df['strike_price'] - spot_price) <= 100]
+            if not atm_calls.empty and "volume" in atm_calls.columns:
+                best_call = atm_calls.loc[atm_calls['volume'].idxmax()]
+                current_ltp = best_call['ltp']
+
+                target_1 = current_ltp * 1.25
+                target_2 = current_ltp * 1.50
+                stop_loss = current_ltp * 0.75
+
+                analysis += f"<b>📊 CALL OPTION ANALYSIS:</b><br>"
+                analysis += f"Strike: {int(best_call['strike_price'])} CE<br>"
+                analysis += f"Current LTP: ₹{current_ltp:.2f}<br>"
+                analysis += f"🎯 Target 1: ₹{target_1:.2f} (25% profit)<br>"
+                analysis += f"🎯 Target 2: ₹{target_2:.2f} (50% profit)<br>"
+                analysis += f"🛑 Stop Loss: ₹{stop_loss:.2f} (25% loss)<br><br>"
+
+        elif market_direction == "BEARISH" and not pe_df.empty and "ltp" in pe_df.columns:
+            atm_puts = pe_df[abs(pe_df['strike_price'] - spot_price) <= 100]
+            if not atm_puts.empty and "volume" in atm_puts.columns:
+                best_put = atm_puts.loc[atm_puts['volume'].idxmax()]
+                current_ltp = best_put['ltp']
+
+                target_1 = current_ltp * 1.25
+                target_2 = current_ltp * 1.50
+                stop_loss = current_ltp * 0.75
+
+                analysis += f"<b>📊 PUT OPTION ANALYSIS:</b><br>"
+                analysis += f"Strike: {int(best_put['strike_price'])} PE<br>"
+                analysis += f"Current LTP: ₹{current_ltp:.2f}<br>"
+                analysis += f"🎯 Target 1: ₹{target_1:.2f} (25% profit)<br>"
+                analysis += f"🎯 Target 2: ₹{target_2:.2f} (50% profit)<br>"
+                analysis += f"🛑 Stop Loss: ₹{stop_loss:.2f} (25% loss)<br><br>"
+
+        analysis += f"<b>💡 TRADING TIPS:</b><br>"
+        analysis += f"• Book 50% profits at Target 1<br>"
+        analysis += f"• Trail stop loss after Target 1<br>"
+        analysis += f"• Exit 30 minutes before market close<br>"
+
+        return analysis
+    except Exception as e:
+        return f"Error in LTP analysis: {e}"
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
-    print("\n" + "="*60)
-    print("🚀 Sajid Shaikh NIFTY 50 Stocks Option Chain Viewer")
-    print("="*60)
-    print(f"📍 Server: http://127.0.0.1:{port}")
-    print("📊 View NIFTY 50 stock options")
-    print("="*60 + "\n")
     app.run(host="0.0.0.0", port=port, debug=True)
