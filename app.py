@@ -275,6 +275,48 @@ def fetch_option_chain():
             </div>
         </div>
 
+        <div class="movers-section" id="oi-gainers-section">
+            <h3>🔥 Option OI Gainers - {stock_name}</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div>
+                    <h4 style="color: green; text-align: center;">📈 Top CALL OI Gainers</h4>
+                    <table id="ce-oi-gainers-table">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Strike</th>
+                                <th>LTP</th>
+                                <th>OI</th>
+                                <th>OI Change</th>
+                                <th>OI Change %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ce-oi-body">
+                            <tr><td colspan="6">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div>
+                    <h4 style="color: red; text-align: center;">📉 Top PUT OI Gainers</h4>
+                    <table id="pe-oi-gainers-table">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Strike</th>
+                                <th>LTP</th>
+                                <th>OI</th>
+                                <th>OI Change</th>
+                                <th>OI Change %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pe-oi-body">
+                            <tr><td colspan="6">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <h3>📊 Options Chain</h3>
         <table id="option-chain-table">
             <thead><tr>{ce_headers}<th>STRIKE</th>{pe_headers}</tr></thead>
@@ -370,12 +412,33 @@ def fetch_option_chain():
                 }}
             }}
 
+            async function refreshOIGainers() {{
+                try {{
+                    const resp = await fetch(`/get_oi_gainers?stock=${{stockName}}`);
+                    const result = await resp.json();
+                    
+                    const ceOIBody = document.querySelector("#ce-oi-body");
+                    const peOIBody = document.querySelector("#pe-oi-body");
+                    
+                    if (result.ce_oi_gainers) {{
+                        ceOIBody.innerHTML = result.ce_oi_gainers;
+                    }}
+                    if (result.pe_oi_gainers) {{
+                        peOIBody.innerHTML = result.pe_oi_gainers;
+                    }}
+                }} catch (err) {{
+                    console.error("Error refreshing OI gainers:", err);
+                }}
+            }}
+
             setInterval(refreshTableRows, 1000);
             setInterval(refreshPositions, 1000);
             setInterval(refreshMovers, 5000);
             setInterval(refreshPricePatterns, 5000);
+            setInterval(refreshOIGainers, 2000);
             refreshMovers();
             refreshPricePatterns();
+            refreshOIGainers();
         </script>
     </body>
     </html>
@@ -664,6 +727,130 @@ def get_price_patterns():
         return jsonify({
             "open_low": error_msg,
             "open_high": error_msg
+        })
+
+@app.route("/get_oi_gainers")
+def get_oi_gainers():
+    global fyers
+    
+    stock_name = request.args.get("stock", "RELIANCE")
+    
+    if fyers is None:
+        return jsonify({
+            "ce_oi_gainers": "<tr><td colspan='6'>Please login first</td></tr>",
+            "pe_oi_gainers": "<tr><td colspan='6'>Please login first</td></tr>"
+        })
+    
+    if stock_name not in nifty50_stocks:
+        return jsonify({
+            "ce_oi_gainers": "<tr><td colspan='6'>Invalid stock</td></tr>",
+            "pe_oi_gainers": "<tr><td colspan='6'>Invalid stock</td></tr>"
+        })
+    
+    try:
+        symbol = nifty50_stocks[stock_name]
+        data = {"symbol": symbol, "strikecount": 50}
+        response = fyers.optionchain(data=data)
+        
+        data_section = response.get("data", {}) if isinstance(response, dict) else {}
+        options_data = data_section.get("optionsChain") or data_section.get("options_chain") or []
+        
+        if not options_data:
+            return jsonify({
+                "ce_oi_gainers": "<tr><td colspan='6'>No option data available</td></tr>",
+                "pe_oi_gainers": "<tr><td colspan='6'>No option data available</td></tr>"
+            })
+        
+        df = pd.json_normalize(options_data)
+        if "strike_price" not in df.columns:
+            possible_strike_cols = [c for c in df.columns if "strike" in c.lower()]
+            if possible_strike_cols:
+                df = df.rename(columns={possible_strike_cols[0]: "strike_price"})
+        
+        num_cols = ["strike_price", "ltp", "oi", "oich", "oichp", "prev_oi"]
+        for col in num_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+        ce_df = df[df["option_type"] == "CE"].copy() if "option_type" in df.columns else pd.DataFrame()
+        pe_df = df[df["option_type"] == "PE"].copy() if "option_type" in df.columns else pd.DataFrame()
+        
+        ce_oi_html = ""
+        if not ce_df.empty and "oich" in ce_df.columns and "oi" in ce_df.columns:
+            ce_gainers = ce_df[
+                (ce_df["oich"] > 0) & 
+                (ce_df["oi"] > 0) & 
+                (ce_df["ltp"] > 0)
+            ].copy()
+            
+            if not ce_gainers.empty:
+                ce_gainers = ce_gainers.sort_values("oich", ascending=False).head(5)
+                
+                for idx, (i, row) in enumerate(ce_gainers.iterrows(), 1):
+                    strike = int(row["strike_price"])
+                    ltp = row["ltp"]
+                    oi = int(row["oi"])
+                    oich = int(row["oich"])
+                    oichp = row.get("oichp", 0)
+                    
+                    ce_oi_html += f"""
+                    <tr style="background-color: #e8f5e9;">
+                        <td><b>{idx}</b></td>
+                        <td><b>{strike} CE</b></td>
+                        <td>₹{ltp:,.2f}</td>
+                        <td>{oi:,}</td>
+                        <td style="color: green; font-weight: bold;">+{oich:,}</td>
+                        <td style="color: green; font-weight: bold;">+{oichp:.2f}%</td>
+                    </tr>
+                    """
+            else:
+                ce_oi_html = "<tr><td colspan='6'>No significant CALL OI changes</td></tr>"
+        else:
+            ce_oi_html = "<tr><td colspan='6'>No CALL OI data available</td></tr>"
+        
+        pe_oi_html = ""
+        if not pe_df.empty and "oich" in pe_df.columns and "oi" in pe_df.columns:
+            pe_gainers = pe_df[
+                (pe_df["oich"] > 0) & 
+                (pe_df["oi"] > 0) & 
+                (pe_df["ltp"] > 0)
+            ].copy()
+            
+            if not pe_gainers.empty:
+                pe_gainers = pe_gainers.sort_values("oich", ascending=False).head(5)
+                
+                for idx, (i, row) in enumerate(pe_gainers.iterrows(), 1):
+                    strike = int(row["strike_price"])
+                    ltp = row["ltp"]
+                    oi = int(row["oi"])
+                    oich = int(row["oich"])
+                    oichp = row.get("oichp", 0)
+                    
+                    pe_oi_html += f"""
+                    <tr style="background-color: #ffebee;">
+                        <td><b>{idx}</b></td>
+                        <td><b>{strike} PE</b></td>
+                        <td>₹{ltp:,.2f}</td>
+                        <td>{oi:,}</td>
+                        <td style="color: red; font-weight: bold;">+{oich:,}</td>
+                        <td style="color: red; font-weight: bold;">+{oichp:.2f}%</td>
+                    </tr>
+                    """
+            else:
+                pe_oi_html = "<tr><td colspan='6'>No significant PUT OI changes</td></tr>"
+        else:
+            pe_oi_html = "<tr><td colspan='6'>No PUT OI data available</td></tr>"
+        
+        return jsonify({
+            "ce_oi_gainers": ce_oi_html,
+            "pe_oi_gainers": pe_oi_html
+        })
+    
+    except Exception as e:
+        error_msg = f"<tr><td colspan='6'>Error: {str(e)}</td></tr>"
+        return jsonify({
+            "ce_oi_gainers": error_msg,
+            "pe_oi_gainers": error_msg
         })
 
 @app.route("/chain_rows_diff")
