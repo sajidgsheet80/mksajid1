@@ -7,8 +7,8 @@ import json
 from datetime import datetime
 
 # ---- Credentials ----
-client_id = "VMS68P9EK0-100"
-secret_key = "ZJ0CFWZEL1"
+client_id = "C12NWQIWBZ-100"
+secret_key = "PSLT99JC91"
 redirect_uri = "http://127.0.0.1:5000/callback"
 
 # ---- Session ----
