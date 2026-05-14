@@ -9,10 +9,9 @@ import pandas as pd
 # CONFIGURATION
 # ==========================================
 app = Flask(__name__)
-# Secret key for Flask session encryption
 app.secret_key = 'super_secret_key_change_this_in_production'
 
-# Hardcoded API Key as requested
+# Hardcoded API Key
 API_KEY = "CJOHJvQ/lUBtRZSXIVAtd3wkLRaSDpVGbO92K+FAIo8="
 
 # Configure logging
@@ -43,6 +42,12 @@ HTML_TEMPLATE = """
         button.btn-primary:hover { background-color: #0056b3; }
         button.btn-logout { background-color: #dc3545; color: white; padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; float: right; }
         
+        /* Search Box for Order Details */
+        .search-box { display: flex; gap: 10px; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; align-items: center; }
+        .search-box input { width: auto; flex-grow: 1; margin: 0; }
+        .btn-search { padding: 10px 20px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        .btn-search:hover { background-color: #218838; }
+
         /* Tab Styles */
         .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; }
         .tab-btn { padding: 10px 20px; background: none; border: none; font-size: 16px; cursor: pointer; color: #555; border-bottom: 3px solid transparent; transition: all 0.3s; }
@@ -54,6 +59,9 @@ HTML_TEMPLATE = """
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #555; font-weight: 600; }
         tr:hover { background-color: #f1f1f1; }
+        
+        /* JSON Output Styles */
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 13px; margin-top: 10px; }
         
         /* Utility */
         .hidden { display: none; }
@@ -95,6 +103,7 @@ HTML_TEMPLATE = """
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('positions')" id="btn-positions">Net Positions</button>
             <button class="tab-btn" onclick="switchTab('orders')" id="btn-orders">Order Book</button>
+            <button class="tab-btn" onclick="switchTab('trades')" id="btn-trades">Trade Book</button>
         </div>
 
         <div id="loading" style="text-align: center; padding: 20px;">Loading data...</div>
@@ -117,21 +126,47 @@ HTML_TEMPLATE = """
         </table>
 
         <!-- ORDER BOOK TABLE -->
-        <table id="order-table" class="hidden">
+        <div id="order-section" class="hidden">
+            <div class="search-box">
+                <input type="text" id="order-detail-id" placeholder="Enter Order ID (e.g., 12422511201192)">
+                <button class="btn-search" onclick="fetchOrderDetails()">Get Order Details</button>
+            </div>
+            <div id="order-detail-result" class="hidden"></div> <!-- For JSON result -->
+            
+            <table id="order-table">
+                <thead>
+                    <tr>
+                        <th>Order ID</th>
+                        <th>Symbol</th>
+                        <th>Type</th>
+                        <th>Qty</th>
+                        <th>Price</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="order-body">
+                    <!-- Rows will be injected here -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- TRADE BOOK TABLE -->
+        <table id="trade-table" class="hidden">
             <thead>
                 <tr>
+                    <th>Trade ID</th>
                     <th>Order ID</th>
                     <th>Symbol</th>
-                    <th>Type</th>
-                    <th>Qty</th>
+                    <th>Quantity</th>
                     <th>Price</th>
-                    <th>Status</th>
+                    <th>Time</th>
                 </tr>
             </thead>
-            <tbody id="order-body">
+            <tbody id="trade-body">
                 <!-- Rows will be injected here -->
             </tbody>
         </table>
+
     </div>
     {% endif %}
 
@@ -146,28 +181,30 @@ HTML_TEMPLATE = """
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.getElementById('btn-' + tabName).classList.add('active');
 
-            // Hide all tables
+            // Hide all sections
             document.getElementById('position-table').classList.add('hidden');
-            document.getElementById('order-table').classList.add('hidden');
+            document.getElementById('order-section').classList.add('hidden');
+            document.getElementById('trade-table').classList.add('hidden');
+            
+            // Reset loading
             document.getElementById('loading').classList.remove('hidden');
             document.getElementById('loading').innerText = "Loading...";
+            document.getElementById('order-detail-result').classList.add('hidden');
 
             // Fetch data immediately upon switch
             if(tabName === 'positions') fetchPositions();
-            else fetchOrderBook();
+            else if(tabName === 'orders') fetchOrderBook();
+            else if(tabName === 'trades') fetchTradeBook();
         }
 
-        // Fetch Positions
+        // --- POSITIONS ---
         async function fetchPositions() {
             if (currentTab !== 'positions') return;
-
             try {
                 const response = await fetch('/api/positions');
                 const data = await response.json();
-                
                 renderPositions(data);
             } catch (err) {
-                console.error("Fetch error:", err);
                 document.getElementById('loading').innerText = "Failed to connect.";
             }
         }
@@ -176,7 +213,6 @@ HTML_TEMPLATE = """
             const tbody = document.getElementById('position-body');
             const table = document.getElementById('position-table');
             const loading = document.getElementById('loading');
-            
             tbody.innerHTML = ''; 
 
             if (data.error) {
@@ -185,7 +221,6 @@ HTML_TEMPLATE = """
                 table.classList.add('hidden');
                 return;
             }
-
             if (!data || data.length === 0) {
                 loading.innerText = "No open positions.";
                 loading.classList.remove('hidden');
@@ -216,17 +251,14 @@ HTML_TEMPLATE = """
             });
         }
 
-        // Fetch Order Book (New Functionality)
+        // --- ORDER BOOK ---
         async function fetchOrderBook() {
             if (currentTab !== 'orders') return;
-
             try {
                 const response = await fetch('/api/order_book');
                 const data = await response.json();
-                
                 renderOrderBook(data);
             } catch (err) {
-                console.error("Fetch error:", err);
                 document.getElementById('loading').innerText = "Failed to connect.";
             }
         }
@@ -234,35 +266,29 @@ HTML_TEMPLATE = """
         function renderOrderBook(data) {
             const tbody = document.getElementById('order-body');
             const table = document.getElementById('order-table');
+            const section = document.getElementById('order-section');
             const loading = document.getElementById('loading');
-            
             tbody.innerHTML = '';
 
             if (data.error) {
                 loading.innerText = "Error: " + data.error;
                 loading.classList.remove('hidden');
-                table.classList.add('hidden');
+                section.classList.add('hidden');
                 return;
             }
-
-            // Handle different response structures (List vs Dict with 'data')
             const orders = Array.isArray(data) ? data : (data.data || []);
-
             if (orders.length === 0) {
                 loading.innerText = "No orders found.";
                 loading.classList.remove('hidden');
-                table.classList.add('hidden');
+                section.classList.add('hidden');
                 return;
             }
 
             loading.classList.add('hidden');
-            table.classList.remove('hidden');
+            section.classList.remove('hidden');
 
             orders.forEach(order => {
                 const row = document.createElement('tr');
-                
-                // Mapping common mStock fields. Adjust keys if API response differs
-                // Assuming keys like: order_id, trading_symbol, transaction_type, quantity, price, status
                 const orderId = order.order_id || order.orderid || '-';
                 const symbol = order.trading_symbol || order.symbol || '-';
                 const type = order.transaction_type || order.side || '-';
@@ -282,11 +308,94 @@ HTML_TEMPLATE = """
             });
         }
 
+        // --- ORDER DETAILS (Specific Order Lookup) ---
+        async function fetchOrderDetails() {
+            const orderId = document.getElementById('order-detail-id').value.trim();
+            if(!orderId) {
+                alert("Please enter an Order ID");
+                return;
+            }
+            
+            const resultDiv = document.getElementById('order-detail-result');
+            resultDiv.innerHTML = "Loading...";
+            resultDiv.classList.remove('hidden');
+
+            try {
+                const response = await fetch(`/api/order_details/${orderId}`);
+                const data = await response.json();
+                
+                // Display as formatted JSON
+                resultDiv.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (err) {
+                resultDiv.innerHTML = "Error fetching details.";
+            }
+        }
+
+        // --- TRADE BOOK ---
+        async function fetchTradeBook() {
+            if (currentTab !== 'trades') return;
+            try {
+                const response = await fetch('/api/trade_book');
+                const data = await response.json();
+                renderTradeBook(data);
+            } catch (err) {
+                document.getElementById('loading').innerText = "Failed to connect.";
+            }
+        }
+
+        function renderTradeBook(data) {
+            const tbody = document.getElementById('trade-body');
+            const table = document.getElementById('trade-table');
+            const loading = document.getElementById('loading');
+            tbody.innerHTML = '';
+
+            if (data.error) {
+                loading.innerText = "Error: " + data.error;
+                loading.classList.remove('hidden');
+                table.classList.add('hidden');
+                return;
+            }
+            // Handle response structure
+            const trades = Array.isArray(data) ? data : (data.data || []);
+            
+            if (trades.length === 0) {
+                loading.innerText = "No trades found.";
+                loading.classList.remove('hidden');
+                table.classList.add('hidden');
+                return;
+            }
+
+            loading.classList.add('hidden');
+            table.classList.remove('hidden');
+
+            trades.forEach(trade => {
+                const row = document.createElement('tr');
+                // Mapping common keys. Adjust if your API returns different names
+                const tradeId = trade.trade_id || trade.tradeid || '-';
+                const orderId = trade.order_id || trade.orderid || '-';
+                const symbol = trade.trading_symbol || trade.symbol || '-';
+                const qty = trade.quantity || trade.traded_quantity || '0';
+                const price = trade.price || trade.trade_price || '0.00';
+                const time = trade.trade_time || trade.time || '-';
+
+                row.innerHTML = `
+                    <td>${tradeId}</td>
+                    <td>${orderId}</td>
+                    <td>${symbol}</td>
+                    <td>${qty}</td>
+                    <td>${price}</td>
+                    <td>${time}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
         // Auto-refresh logic
         {% if session.get('logged_in') %}
         setInterval(() => {
             if(currentTab === 'positions') fetchPositions();
-            else fetchOrderBook();
+            else if(currentTab === 'orders') fetchOrderBook();
+            else if(currentTab === 'trades') fetchTradeBook();
         }, 3000);
         
         // Initial load
@@ -315,26 +424,17 @@ def login():
         return render_template_string(HTML_TEMPLATE, api_key=API_KEY, error="OTP is required.")
 
     try:
-        # Create a new MConnect instance
         mconnect_obj = MConnect()
-        
-        # Verify TOTP using the Hardcoded API Key
         logging.info(f"Attempting login with Key: {API_KEY}")
         res = mconnect_obj.verify_totp(API_KEY, totp)
         
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "success":
-                # 1. Mark Flask session as logged in
                 session['logged_in'] = True
-                
-                # 2. Generate a unique ID manually
                 unique_sid = str(uuid.uuid4())
                 session['sid'] = unique_sid 
-                
-                # 3. Store the mconnect_obj in our global memory dictionary
                 ACTIVE_SESSIONS[unique_sid] = mconnect_obj
-                
                 return redirect(url_for('index'))
             else:
                 return render_template_string(HTML_TEMPLATE, api_key=API_KEY, error=data.get("message", "Login Failed"))
@@ -351,48 +451,78 @@ def logout():
     sid = session.get('sid')
     if sid and sid in ACTIVE_SESSIONS:
         del ACTIVE_SESSIONS[sid]
-    
     session.clear()
     return redirect(url_for('index'))
 
 @app.route("/api/positions")
 def get_positions():
-    """API Endpoint to fetch live positions using the stored SDK object."""
+    """Fetch live positions."""
     if 'logged_in' not in session or 'sid' not in session:
         return jsonify({"error": "Not logged in"})
-
     sid = session['sid']
     mconnect_obj = ACTIVE_SESSIONS.get(sid)
-
     if not mconnect_obj:
-        return jsonify({"error": "Session expired. Please login again."})
-
+        return jsonify({"error": "Session expired"})
     try:
-        # Use the stored object to call the SDK method
         res = mconnect_obj.get_net_position()
-        
         if res.status_code == 200:
             data = res.json()
-            # Handle different response structures from the API
-            if isinstance(data, dict) and 'data' in data:
-                return jsonify(data['data'])
-            elif isinstance(data, list):
-                return jsonify(data)
-            else:
-                return jsonify(data)
+            if isinstance(data, dict) and 'data' in data: return jsonify(data['data'])
+            elif isinstance(data, list): return jsonify(data)
+            else: return jsonify(data)
         else:
             return jsonify({"error": f"API Error: {res.status_code}"})
-            
     except Exception as e:
         logging.exception("Fetch Position Error")
         return jsonify({"error": str(e)})
 
-# ==========================================
-# NEW ROUTE FOR ORDER BOOK
-# ==========================================
 @app.route("/api/order_book")
 def get_order_book():
-    """API Endpoint to fetch order book using the stored SDK object."""
+    """Fetch order book."""
+    if 'logged_in' not in session or 'sid' not in session:
+        return jsonify({"error": "Not logged in"})
+    sid = session['sid']
+    mconnect_obj = ACTIVE_SESSIONS.get(sid)
+    if not mconnect_obj:
+        return jsonify({"error": "Session expired"})
+    try:
+        res = mconnect_obj.get_order_book()
+        if res.status_code == 200:
+            data = res.json()
+            if isinstance(data, dict) and 'data' in data: return jsonify(data['data'])
+            elif isinstance(data, list): return jsonify(data)
+            else: return jsonify(data)
+        else:
+            return jsonify({"error": f"API Error: {res.status_code}"})
+    except Exception as e:
+        logging.exception("Fetch Order Book Error")
+        return jsonify({"error": str(e)})
+
+@app.route("/api/order_details/<order_id>")
+def get_order_details(order_id):
+    """Fetch details for a specific order."""
+    if 'logged_in' not in session or 'sid' not in session:
+        return jsonify({"error": "Not logged in"})
+    sid = session['sid']
+    mconnect_obj = ACTIVE_SESSIONS.get(sid)
+    if not mconnect_obj:
+        return jsonify({"error": "Session expired"})
+    try:
+        res = mconnect_obj.get_order_details(order_id)
+        if res.status_code == 200:
+            return jsonify(res.json())
+        else:
+            return jsonify({"error": f"API Error: {res.status_code}"})
+    except Exception as e:
+        logging.exception("Fetch Order Details Error")
+        return jsonify({"error": str(e)})
+
+# ==========================================
+# NEW ROUTE: TRADE BOOK
+# ==========================================
+@app.route("/api/trade_book")
+def get_trade_book():
+    """Fetch trade book (executed trades)."""
     if 'logged_in' not in session or 'sid' not in session:
         return jsonify({"error": "Not logged in"})
 
@@ -403,8 +533,8 @@ def get_order_book():
         return jsonify({"error": "Session expired. Please login again."})
 
     try:
-        # Call the get_order_book method requested
-        res = mconnect_obj.get_order_book()
+        # Call the get_trade_book method
+        res = mconnect_obj.get_trade_book()
         
         if res.status_code == 200:
             data = res.json()
@@ -419,7 +549,7 @@ def get_order_book():
             return jsonify({"error": f"API Error: {res.status_code}"})
             
     except Exception as e:
-        logging.exception("Fetch Order Book Error")
+        logging.exception("Fetch Trade Book Error")
         return jsonify({"error": str(e)})
 
 # ==========================================
