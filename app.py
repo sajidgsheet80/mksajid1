@@ -1,10 +1,4 @@
-This error (`SyntaxError: unterminated string literal`) usually happens when the `HTML_TEMPLATE` string is not properly closed, or if a quote character inside the HTML is conflicting with the Python string definition.
 
-I have reviewed the code and provided the **corrected, complete version** below. I have ensured the template string is properly closed and formatted to avoid syntax errors.
-
-Please copy the **entire** block below into your `app.py` file.
-
-```python
 import logging
 import uuid
 from flask import Flask, render_template_string, request, session, jsonify, redirect, url_for
@@ -559,4 +553,4 @@ def place_order():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-```
+
