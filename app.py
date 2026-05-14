@@ -1,11 +1,8 @@
-Here is the updated code with the **Place Order** functionality integrated.
+This error (`SyntaxError: unterminated string literal`) usually happens when the `HTML_TEMPLATE` string is not properly closed, or if a quote character inside the HTML is conflicting with the Python string definition.
 
-**Using "Intelligence" (SDK vs Raw Requests):**
-I noticed your snippet uses raw `requests.post` and manual access token handling. However, since we already have the `mconnect_obj` stored in the session (which handles authentication internally), it is much more robust and cleaner to use the SDK's built-in `place_order` method. This ensures tokens are managed correctly by the library.
+I have reviewed the code and provided the **corrected, complete version** below. I have ensured the template string is properly closed and formatted to avoid syntax errors.
 
-I have added a **Place Order Tab** with a form pre-filled with the values from your snippet (NIFTY Option, AMO, etc.).
-
-Save this as `app.py` and run.
+Please copy the **entire** block below into your `app.py` file.
 
 ```python
 import logging
@@ -136,11 +133,11 @@ HTML_TEMPLATE = """
         <!-- ORDER BOOK TABLE -->
         <div id="order-section" class="hidden">
             <div class="search-box">
-                <input type="text" id="order-detail-id" placeholder="Enter Order ID">
-                <button class="btn-search" onclick="fetchOrderDetails()">Get Order Details</button>
+                <input type="text" id="order-detail-id" placeholder="Enter Order ID" style="width:auto; margin-right:10px;">
+                <button class="btn-search" onclick="fetchOrderDetails()" style="padding:10px; background:#28a745; color:white; border:none; border-radius:5px; cursor:pointer;">Get Order Details</button>
             </div>
             <div id="order-detail-result" class="hidden"></div>
-            <table id="order-table">
+            <table id="order-table" style="margin-top:20px;">
                 <thead>
                     <tr>
                         <th>Order ID</th>
@@ -262,7 +259,6 @@ HTML_TEMPLATE = """
             else if(tabName === 'orders') fetchOrderBook();
             else if(tabName === 'trades') fetchTradeBook();
             else if(tabName === 'place') {
-                // No auto refresh for place order, just show form
                 document.getElementById('place-section').classList.remove('hidden');
             }
         }
@@ -309,7 +305,7 @@ HTML_TEMPLATE = """
                 const result = await response.json();
 
                 if (result.success || result.status === 'success') {
-                    msg.innerText = "Order Placed Successfully! ID: " + (result.data?.order_id || "Check Logs");
+                    msg.innerText = "Order Placed Successfully! ID: " + (result.data ? (result.data.order_id || "Check Logs") : "Check Logs");
                     msg.style.color = "green";
                 } else {
                     msg.innerText = "Order Failed: " + (result.message || JSON.stringify(result));
@@ -323,9 +319,6 @@ HTML_TEMPLATE = """
                 btn.innerText = "PLACE ORDER";
             }
         }
-
-        // ... (Keep existing fetch functions: fetchPositions, fetchOrderBook, fetchOrderDetails, fetchTradeBook) ...
-        // Re-including them here for completeness
 
         async function fetchPositions() {
             if (currentTab !== 'positions') return;
@@ -345,9 +338,14 @@ HTML_TEMPLATE = """
             if (!data || data.length === 0) { loading.innerText = "No open positions."; loading.classList.remove('hidden'); table.classList.add('hidden'); return; }
             loading.classList.add('hidden'); table.classList.remove('hidden');
             data.forEach(pos => {
-                const qty = parseFloat(pos.quantity || 0); const ltp = parseFloat(pos.ltp || 0); const avg = parseFloat(pos.avg_price || 0);
-                const pnl = qty * (ltp - avg); const pnlColor = pnl >= 0 ? 'green' : 'red';
-                tbody.innerHTML += `<tr><td>${pos.trading_symbol || '-'}</td><td>${pos.product || '-'}</td><td>${pos.quantity || '0'}</td><td>${pos.avg_price || '0.00'}</td><td>${pos.ltp || '0.00'}</td><td style="color:${pnlColor}; font-weight:bold;">${pnl.toFixed(2)}</td></tr>`;
+                const qty = parseFloat(pos.quantity || 0); 
+                const ltp = parseFloat(pos.ltp || 0); 
+                const avg = parseFloat(pos.avg_price || 0);
+                const pnl = qty * (ltp - avg); 
+                const pnlColor = pnl >= 0 ? 'green' : 'red';
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${pos.trading_symbol || '-'}</td><td>${pos.product || '-'}</td><td>${pos.quantity || '0'}</td><td>${pos.avg_price || '0.00'}</td><td>${pos.ltp || '0.00'}</td><td style="color:${pnlColor}; font-weight:bold;">${pnl.toFixed(2)}</td>`;
+                tbody.appendChild(row);
             });
         }
 
@@ -371,8 +369,9 @@ HTML_TEMPLATE = """
             if (orders.length === 0) { loading.innerText = "No orders found."; loading.classList.remove('hidden'); section.classList.add('hidden'); return; }
             loading.classList.add('hidden'); section.classList.remove('hidden');
             orders.forEach(order => {
-                const row = `<tr><td>${order.order_id || order.orderid || '-'}</td><td>${order.trading_symbol || order.symbol || '-'}</td><td>${order.transaction_type || order.side || '-'}</td><td>${order.quantity || order.filled_quantity || '0'}</td><td>${order.price || order.average_price || '0.00'}</td><td><span style="padding: 2px 6px; border-radius: 4px; background: #e9ecef; font-size: 0.9em;">${order.status || '-'}</span></td></tr>`;
-                tbody.innerHTML += row;
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${order.order_id || order.orderid || '-'}</td><td>${order.trading_symbol || order.symbol || '-'}</td><td>${order.transaction_type || order.side || '-'}</td><td>${order.quantity || order.filled_quantity || '0'}</td><td>${order.price || order.average_price || '0.00'}</td><td><span style="padding: 2px 6px; border-radius: 4px; background: #e9ecef; font-size: 0.9em;">${order.status || '-'}</span></td></tr>`;
+                tbody.appendChild(row);
             });
         }
 
@@ -407,7 +406,9 @@ HTML_TEMPLATE = """
             if (trades.length === 0) { loading.innerText = "No trades found."; loading.classList.remove('hidden'); table.classList.add('hidden'); return; }
             loading.classList.add('hidden'); table.classList.remove('hidden');
             trades.forEach(trade => {
-                tbody.innerHTML += `<tr><td>${trade.trade_id || trade.tradeid || '-'}</td><td>${trade.order_id || trade.orderid || '-'}</td><td>${trade.trading_symbol || trade.symbol || '-'}</td><td>${trade.quantity || trade.traded_quantity || '0'}</td><td>${trade.price || trade.trade_price || '0.00'}</td><td>${trade.trade_time || trade.time || '-'}</td></tr>`;
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${trade.trade_id || trade.tradeid || '-'}</td><td>${trade.order_id || trade.orderid || '-'}</td><td>${trade.trading_symbol || trade.symbol || '-'}</td><td>${trade.quantity || trade.traded_quantity || '0'}</td><td>${trade.price || trade.trade_price || '0.00'}</td><td>${trade.trade_time || trade.time || '-'}</td></tr>`;
+                tbody.appendChild(row);
             });
         }
 
@@ -516,9 +517,6 @@ def get_trade_book():
         return jsonify({"error": f"API Error: {res.status_code}"})
     except Exception as e: return jsonify({"error": str(e)})
 
-# ==========================================
-# NEW ROUTE: PLACE ORDER (SDK Implementation)
-# ==========================================
 @app.route("/api/place_order", methods=["POST"])
 def place_order():
     if 'logged_in' not in session or 'sid' not in session:
@@ -531,11 +529,9 @@ def place_order():
         return jsonify({"error": "Session expired. Please login again."})
 
     try:
-        # Get JSON data from frontend
         req_data = request.json
         
-        # Using the SDK's place_order method instead of raw requests
-        # The SDK handles the auth headers internally using the stored session
+        # Using SDK place_order method
         res = mconnect_obj.place_order(
             tradingsymbol=req_data.get('tradingsymbol'),
             exchange=req_data.get('exchange'),
@@ -551,7 +547,6 @@ def place_order():
         if res.status_code == 200:
             return jsonify(res.json())
         else:
-            # Try to get error message from response
             try:
                 err_data = res.json()
                 return jsonify({"status": "error", "message": err_data})
