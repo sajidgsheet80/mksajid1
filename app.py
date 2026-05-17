@@ -327,15 +327,15 @@ HTML_TEMPLATE = """
             const msg = document.getElementById('order-response-msg');
             
             const payload = {
-                tradingsymbol: document.getElementById('po_symbol').value,
-                exchange: document.getElementById('po_exchange').value,
-                transaction_type: document.getElementById('po_ttype').value,
-                order_type: document.getElementById('po_otype').value,
-                quantity: parseInt(document.getElementById('po_qty').value),
-                product: document.getElementById('po_product').value,
-                validity: document.getElementById('po_validity').value,
-                price: parseFloat(document.getElementById('po_price').value),
-                variety: document.getElementById('po_variety').value
+                _tradingsymbol: document.getElementById('po_symbol').value,
+                _exchange: document.getElementById('po_exchange').value,
+                _transaction_type: document.getElementById('po_ttype').value,
+                _order_type: document.getElementById('po_otype').value,
+                _quantity: parseInt(document.getElementById('po_qty').value),
+                _product: document.getElementById('po_product').value,
+                _validity: document.getElementById('po_validity').value,
+                _price: parseFloat(document.getElementById('po_price').value),
+                _variety: document.getElementById('po_variety').value
             };
 
             msg.innerText = "Placing Order...";
