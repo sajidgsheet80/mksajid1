@@ -3,6 +3,7 @@ import logging
 import uuid
 import io
 import pandas as pd
+import requests  # ADDED FOR RAW API CALLS
 from flask import Flask, render_template_string, request, session, jsonify, redirect, url_for
 from tradingapi_a.mconnect import MConnect
 
@@ -183,7 +184,7 @@ HTML_TEMPLATE = """
                 </div>
                 <div>
                     <label>Strikes Range (±)</label>
-                    <input type="number" id="oc_strike_range" value="10" min="5" max="50">
+                    <input type="number" id="oc_strike_range" value="5" min="1" max="20">
                 </div>
                 <div>
                     <label>&nbsp;</label>
@@ -272,8 +273,8 @@ HTML_TEMPLATE = """
                 <div class="full-width">
                     <label>Variety</label>
                     <select id="po_variety">
-                        <option value="regular">Regular</option>
-                        <option value="amo" selected>AMO (After Market)</option>
+                        <option value="regular" selected>Regular</option>
+                        <option value="amo">AMO (After Market)</option>
                         <option value="stoploss">Stoploss</option>
                     </select>
                 </div>
@@ -352,7 +353,7 @@ HTML_TEMPLATE = """
                 const result = await response.json();
 
                 if (result.success || result.status === 'success') {
-                    msg.innerText = "Order Placed Successfully! ID: " + (result.data ? (result.data.order_id || "Check Logs") : "Check Logs");
+                    msg.innerText = "Order Placed Successfully! ID: " + (result.data ? (result.data.orderid || result.data.order_id || "Check Logs") : "Check Logs");
                     msg.style.color = "green";
                 } else {
                     msg.innerText = "Order Failed: " + (result.message || JSON.stringify(result));
@@ -473,9 +474,15 @@ HTML_TEMPLATE = """
                 const url = `/api/option_chain?symbol=${symbol}&strike_range=${range}`;
                 const response = await fetch(url);
                 const data = await response.json();
+                
+                if (!response.ok || data.error) {
+                    throw new Error(data.error || "API Error");
+                }
+                
                 renderOptionChain(data);
             } catch (err) { 
-                loading.innerText = "Error connecting to Option Chain API."; 
+                console.error(err);
+                loading.innerText = "Error: " + err.message; 
                 loading.classList.remove('hidden');
                 section.classList.add('hidden');
             }
@@ -489,16 +496,14 @@ HTML_TEMPLATE = """
 
             tbody.innerHTML = '';
             
-            if (data.error) { 
-                loading.innerText = "Error: " + data.error; 
-                loading.classList.remove('hidden'); 
-                section.classList.add('hidden'); 
-                return; 
+            if (!Array.isArray(data)) {
+                loading.innerText = "Invalid data format received.";
+                loading.classList.remove('hidden');
+                section.classList.add('hidden');
+                return;
             }
-            
-            const chainData = Array.isArray(data) ? data : (data.data || []);
 
-            if (chainData.length === 0) { 
+            if (data.length === 0) { 
                 loading.innerText = "No option chain data found."; 
                 loading.classList.remove('hidden'); 
                 section.classList.add('hidden'); 
@@ -508,7 +513,7 @@ HTML_TEMPLATE = """
             loading.classList.add('hidden'); 
             section.classList.remove('hidden');
 
-            chainData.forEach(row => {
+            data.forEach(row => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${row.ce_oi_chng || '-'}</td>
@@ -555,6 +560,18 @@ def login():
         mconnect_obj = MConnect()
         logging.info(f"Attempting login with Key: {API_KEY}")
         res = mconnect_obj.verify_totp(API_KEY, totp)
+        
+        # EXTRACT ACCESS TOKEN FOR RAW API CALLS
+        access_token = None
+        try:
+            if res.status_code == 200:
+                data = res.json()
+                # The structure is usually data.data.access_token or data.access_token
+                if isinstance(data, dict):
+                    access_token = data.get('access_token') or data.get('data', {}).get('access_token')
+        except Exception as e:
+            logging.error(f"Could not extract access token: {e}")
+
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "success":
@@ -569,7 +586,6 @@ def login():
                     csv = io.BytesIO(inst_res)
                     df_instruments = pd.read_csv(csv)
                     
-                    # DETECT TOKEN COLUMN NAME
                     token_col = None
                     for col in ["token","instrument_token","symboltoken","instrumenttoken"]:
                         if col in df_instruments.columns:
@@ -578,22 +594,23 @@ def login():
                     
                     if not token_col:
                         logging.error("Could not find token column in CSV.")
-                        return render_template_string(HTML_TEMPLATE, api_key=API_KEY, error="Instrument CSV format error: No token column found.")
+                        return render_template_string(HTML_TEMPLATE, api_key=API_KEY, error="Instrument CSV format error.")
 
-                    logging.info(f"Instruments downloaded. Detected Token Column: {token_col}")
+                    logging.info(f"Instruments downloaded. Token Column: {token_col}")
                     
                     ACTIVE_SESSIONS[unique_sid] = {
                         "mconnect": mconnect_obj,
                         "instruments": df_instruments,
-                        "token_col": token_col
+                        "token_col": token_col,
+                        "access_token": access_token # STORE ACCESS TOKEN
                     }
                 except Exception as e:
                     logging.error(f"Failed to download instruments: {e}")
-                    # Still allow login but with limited functionality
                     ACTIVE_SESSIONS[unique_sid] = {
                         "mconnect": mconnect_obj,
                         "instruments": None,
-                        "token_col": None
+                        "token_col": None,
+                        "access_token": access_token
                     }
 
                 return redirect(url_for('index'))
@@ -688,9 +705,8 @@ def get_option_chain_api():
 
     try:
         symbol = request.args.get('symbol', 'NIFTY')
-        strike_range_count = int(request.args.get('strike_range', 10))
+        strike_range_count = int(request.args.get('strike_range', 5))
         
-        # 1. Filter for Index Options
         nifty = df[
             (df["segment"] == "OPTIDX") &
             (df["exchange"] == "NFO") &
@@ -698,17 +714,14 @@ def get_option_chain_api():
         ]
 
         if nifty.empty:
-            return jsonify({"error": f"No options found for {symbol}"})
+            return jsonify({"error": f"No options found for {symbol}. Check Symbol name."})
 
-        # 2. Find Nearest Expiry
         exp_list = nifty["expiry"].dropna().unique().tolist()
         exp_list.sort()
         nearest_exp = exp_list[0]
         
         nifty_exp = nifty[nifty["expiry"] == nearest_exp]
 
-        # 3. Find ATM Strike
-        # To find ATM, we need the current spot price of the Index.
         index_data = df[
             (df["segment"] == "INDEX") & 
             (df["exchange"] == "NSE") & 
@@ -717,26 +730,27 @@ def get_option_chain_api():
         
         spot_price = 0
         if not index_data.empty:
-            # Use the detected token column
             index_token = str(index_data.iloc[0][token_col])
             try:
                 quote_res = mconnect_obj.get_quotes([index_token]) 
                 if quote_res.status_code == 200:
                     quote_json = quote_res.json()
-                    # Handling potential nested structure
-                    if isinstance(quote_json, dict) and 'data' in quote_json:
+                    if isinstance(quote_json, dict) and 'data' in quote_json and isinstance(quote_json['data'], list):
                         spot_price = float(quote_json['data'][0].get('ltp', 0))
-                    elif isinstance(quote_json, list):
+                    elif isinstance(quote_json, list) and len(quote_json) > 0:
                         spot_price = float(quote_json[0].get('ltp', 0))
             except Exception as e:
                 logging.warning(f"Could not fetch spot price: {e}")
         
         if spot_price == 0:
             all_strikes = nifty_exp["strike"].unique()
-            spot_price = (min(all_strikes) + max(all_strikes)) / 2
+            if len(all_strikes) > 0:
+                spot_price = (min(all_strikes) + max(all_strikes)) / 2
 
         strike_interval = 50 
         if symbol == "BANKNIFTY": strike_interval = 100
+        elif symbol == "FINNIFTY": strike_interval = 50
+        elif symbol == "MIDCPNIFTY": strike_interval = 25
         
         atm_strike = round(spot_price / strike_interval) * strike_interval
         
@@ -748,7 +762,6 @@ def get_option_chain_api():
             (nifty_exp["strike"] <= upper_strike)
         ]
 
-        # 5. Separate CE and PE
         if "option_type" in strike_range_df.columns:
             ce_options = strike_range_df[strike_range_df["option_type"] == "CE"]
             pe_options = strike_range_df[strike_range_df["option_type"] == "PE"]
@@ -756,37 +769,52 @@ def get_option_chain_api():
             ce_options = strike_range_df[strike_range_df["tradingsymbol"].str.endswith("CE")]
             pe_options = strike_range_df[strike_range_df["tradingsymbol"].str.endswith("PE")]
 
-        # 6. Get Tokens for Live Data using the detected column
         all_tokens = ce_options[token_col].tolist() + pe_options[token_col].tolist()
         
         price_map = {}
         
         try:
             if all_tokens:
+                all_tokens = [str(t) for t in all_tokens]
+                logging.info(f"Requesting quotes for {len(all_tokens)} tokens")
                 quote_res = mconnect_obj.get_quotes(all_tokens)
+                
                 if quote_res.status_code == 200:
                     q_data = quote_res.json()
-                    q_list = q_data.get('data', q_data) if isinstance(q_data, dict) else q_data
+                    q_list = []
                     
-                    for item in q_list:
-                        tk = str(item.get('symboltoken'))
-                        ltp = item.get('ltp', 0)
-                        oi = item.get('oi', 0)
-                        oi_chng = item.get('change_oi', 0) 
-                        price_map[tk] = {'ltp': ltp, 'oi': oi, 'oi_chng': oi_chng}
-        except Exception as e:
-            logging.error(f"Error fetching option quotes: {e}")
+                    if isinstance(q_data, dict):
+                        if q_data.get('status') == 'error':
+                            return jsonify({"error": f"Quote API Error: {q_data.get('message', 'Unknown')}"})
+                        if 'data' in q_data:
+                            q_list = q_data['data']
+                        else:
+                            logging.warning(f"Unexpected quote dict structure: {q_data.keys()}")
+                    elif isinstance(q_data, list):
+                        q_list = q_data
 
-        # 8. Merge Data
+                    if isinstance(q_list, list):
+                        for item in q_list:
+                            if not isinstance(item, dict): continue
+                            tk = item.get('symboltoken') or item.get('instrument_token') or item.get('token')
+                            if tk:
+                                tk = str(tk)
+                                price_map[tk] = {
+                                    'ltp': item.get('ltp', 0),
+                                    'oi': item.get('oi', 0),
+                                    'oi_chng': item.get('change_oi', 0)
+                                }
+        except Exception as e:
+            logging.exception("Error fetching option quotes")
+            pass
+
         response_data = []
-        
         ce_options = ce_options.sort_values('strike')
         pe_options = pe_options.sort_values('strike')
 
         for strike in sorted(strike_range_df['strike'].unique()):
             row = {'strike': strike}
             
-            # Get CE Data
             ce_row = ce_options[ce_options['strike'] == strike]
             if not ce_row.empty:
                 ce_token = str(ce_row.iloc[0][token_col])
@@ -799,7 +827,6 @@ def get_option_chain_api():
                 row['ce_oi'] = 0
                 row['ce_oi_chng'] = 0
 
-            # Get PE Data
             pe_row = pe_options[pe_options['strike'] == strike]
             if not pe_row.empty:
                 pe_token = str(pe_row.iloc[0][token_col])
@@ -829,33 +856,64 @@ def place_order():
     session_data = ACTIVE_SESSIONS.get(sid)
     if not session_data: return jsonify({"error": "Session expired"})
     
-    mconnect_obj = session_data['mconnect']
+    # Retrieve access token
+    access_token = session_data.get('access_token')
+    if not access_token:
+        logging.error("Access Token missing. Cannot place order via raw API.")
+        return jsonify({"error": "Access Token missing. Please logout and login again."})
 
     try:
         req_data = request.json
-        res = mconnect_obj.place_order(
-            tradingsymbol=req_data.get('tradingsymbol'),
-            exchange=req_data.get('exchange'),
-            transaction_type=req_data.get('transaction_type'),
-            order_type=req_data.get('order_type'),
-            quantity=req_data.get('quantity'),
-            product=req_data.get('product'),
-            validity=req_data.get('validity'),
-            price=req_data.get('price'),
-            variety=req_data.get('variety')
+        
+        # Construct the URL based on variety (Regular, AMO, Stoploss)
+        # URL pattern: https://api.mstock.trade/openapi/typea/orders/{variety}
+        variety = req_data.get('variety', 'regular')
+        url = f'https://api.mstock.trade/openapi/typea/orders/{variety}'
+        
+        # Prepare Payload
+        payload = {
+            'tradingsymbol': req_data.get('tradingsymbol'),
+            'exchange': req_data.get('exchange'),
+            'transaction_type': req_data.get('transaction_type'),
+            'order_type': req_data.get('order_type'),
+            'quantity': req_data.get('quantity'),
+            'product': req_data.get('product'),
+            'validity': req_data.get('validity'),
+            'price': req_data.get('price'),
+            'variety': variety  # Included in body as per reference
+        }
+        
+        # Prepare Headers
+        headers = {
+            'X-Mirae-Version': '1',
+            'Authorization': f'token {API_KEY}:{access_token}',
+            'Content-Type': 'application/x-www-form-urlencoded',
+        }
+        
+        logging.info(f"Placing Order via Raw API: {url} with payload {payload}")
+        
+        # Make API request
+        response = requests.post(
+            url,
+            headers=headers,
+            data=payload
         )
         
-        if res.status_code == 200:
-            return jsonify(res.json())
+        resp_json = response.json()
+        logging.info(f"Order Response: {resp_json}")
+        
+        if resp_json.get("status") == "success":
+            return jsonify(resp_json)
         else:
-            try:
-                err_data = res.json()
-                return jsonify({"status": "error", "message": err_data})
-            except:
-                return jsonify({"status": "error", "message": f"HTTP {res.status_code}"})
+            # Return the error message from the API
+            return jsonify({
+                "status": "error", 
+                "message": resp_json.get("message", "Unknown API Error"),
+                "details": resp_json
+            })
             
     except Exception as e:
-        logging.exception("Place Order Error")
+        logging.exception("Place Order Error (Raw API)")
         return jsonify({"error": str(e)})
 
 if __name__ == "__main__":
