@@ -1,11 +1,9 @@
 
 import logging
 import uuid
-import io
-import pandas as pd
-import requests
 from flask import Flask, render_template_string, request, session, jsonify, redirect, url_for
 from tradingapi_a.mconnect import MConnect
+import pandas as pd
 
 # ==========================================
 # CONFIGURATION
@@ -39,7 +37,7 @@ HTML_TEMPLATE = """
         
         /* Form Styles */
         .login-box { max-width: 400px; margin: 50px auto; text-align: center; }
-        input[type="text"], input[type="password"], input[type="number"], input[type="date"], select { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        input[type="text"], input[type="password"], input[type="number"], select { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
         button.btn-primary { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
         button.btn-primary:hover { background-color: #0056b3; }
         button.btn-logout { background-color: #dc3545; color: white; padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; float: right; }
@@ -51,22 +49,16 @@ HTML_TEMPLATE = """
         .btn-place:hover { background-color: #218838; }
         
         /* Tab Styles */
-        .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; overflow-x: auto; }
-        .tab-btn { padding: 10px 20px; background: none; border: none; font-size: 16px; cursor: pointer; color: #555; border-bottom: 3px solid transparent; transition: all 0.3s; white-space: nowrap; }
+        .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; }
+        .tab-btn { padding: 10px 20px; background: none; border: none; font-size: 16px; cursor: pointer; color: #555; border-bottom: 3px solid transparent; transition: all 0.3s; }
         .tab-btn:hover { color: #007bff; }
         .tab-btn.active { color: #007bff; border-bottom: 3px solid #007bff; font-weight: bold; }
 
         /* Table Styles */
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
-        th, td { padding: 10px; text-align: center; border-bottom: 1px solid #ddd; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #555; font-weight: 600; }
         tr:hover { background-color: #f1f1f1; }
-        
-        /* Option Chain Specifics */
-        .oc-ce-ltp { color: green; font-weight: bold; }
-        .oc-pe-ltp { color: red; font-weight: bold; }
-        .oc-controls { display: flex; gap: 10px; margin-bottom: 15px; align-items: flex-end; }
-        .oc-controls > div { flex: 1; }
         
         /* JSON Output Styles */
         pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 13px; margin-top: 10px; }
@@ -112,7 +104,6 @@ HTML_TEMPLATE = """
             <button class="tab-btn active" onclick="switchTab('positions')" id="btn-positions">Net Positions</button>
             <button class="tab-btn" onclick="switchTab('orders')" id="btn-orders">Order Book</button>
             <button class="tab-btn" onclick="switchTab('trades')" id="btn-trades">Trade Book</button>
-            <button class="tab-btn" onclick="switchTab('optionchain')" id="btn-optionchain">Option Chain</button>
             <button class="tab-btn" onclick="switchTab('place')" id="btn-place">Place Order</button>
         </div>
 
@@ -169,50 +160,6 @@ HTML_TEMPLATE = """
             </thead>
             <tbody id="trade-body"></tbody>
         </table>
-
-        <!-- OPTION CHAIN SECTION -->
-        <div id="oc-section" class="hidden">
-            <div class="oc-controls">
-                <div>
-                    <label>Index Symbol</label>
-                    <select id="oc_symbol">
-                        <option value="NIFTY">NIFTY</option>
-                        <option value="BANKNIFTY">BANKNIFTY</option>
-                        <option value="FINNIFTY">FINNIFTY</option>
-                        <option value="MIDCPNIFTY">MIDCPNIFTY</option>
-                    </select>
-                </div>
-                <div>
-                    <label>Strikes Range (±)</label>
-                    <!-- Reduced default to 3 to prevent API limit errors -->
-                    <input type="number" id="oc_strike_range" value="3" min="1" max="20">
-                </div>
-                <div>
-                    <label>&nbsp;</label>
-                    <button class="btn-primary" style="padding: 12px;" onclick="fetchOptionChain(true)">Refresh</button>
-                </div>
-            </div>
-            
-            <table id="oc-table">
-                <thead>
-                    <tr>
-                        <th colspan="3" style="color: green; border-bottom: 2px solid #ddd;">CALLS</th>
-                        <th style="background-color: #e9ecef;">Strike</th>
-                        <th colspan="3" style="color: red; border-bottom: 2px solid #ddd;">PUTS</th>
-                    </tr>
-                    <tr>
-                        <th>OI Chg</th>
-                        <th>OI</th>
-                        <th>LTP</th>
-                        <th style="background-color: #f8f9fa;">Price</th>
-                        <th>LTP</th>
-                        <th>OI</th>
-                        <th>OI Chg</th>
-                    </tr>
-                </thead>
-                <tbody id="oc-body"></tbody>
-            </table>
-        </div>
 
         <!-- PLACE ORDER FORM -->
         <div id="place-section" class="hidden" style="background: #f9f9f9; padding: 20px; border-radius: 8px;">
@@ -274,8 +221,8 @@ HTML_TEMPLATE = """
                 <div class="full-width">
                     <label>Variety</label>
                     <select id="po_variety">
-                        <option value="regular" selected>Regular</option>
-                        <option value="amo">AMO (After Market)</option>
+                        <option value="regular">Regular</option>
+                        <option value="amo" selected>AMO (After Market)</option>
                         <option value="stoploss">Stoploss</option>
                     </select>
                 </div>
@@ -297,7 +244,6 @@ HTML_TEMPLATE = """
             document.getElementById('position-table').classList.add('hidden');
             document.getElementById('order-section').classList.add('hidden');
             document.getElementById('trade-table').classList.add('hidden');
-            document.getElementById('oc-section').classList.add('hidden');
             document.getElementById('place-section').classList.add('hidden');
             
             document.getElementById('loading').classList.add('hidden');
@@ -306,7 +252,6 @@ HTML_TEMPLATE = """
             if(tabName === 'positions') fetchPositions();
             else if(tabName === 'orders') fetchOrderBook();
             else if(tabName === 'trades') fetchTradeBook();
-            else if(tabName === 'optionchain') fetchOptionChain(true);
             else if(tabName === 'place') {
                 document.getElementById('place-section').classList.remove('hidden');
             }
@@ -354,7 +299,7 @@ HTML_TEMPLATE = """
                 const result = await response.json();
 
                 if (result.success || result.status === 'success') {
-                    msg.innerText = "Order Placed Successfully! ID: " + (result.data ? (result.data.orderid || result.data.order_id || "Check Logs") : "Check Logs");
+                    msg.innerText = "Order Placed Successfully! ID: " + (result.data ? (result.data.order_id || "Check Logs") : "Check Logs");
                     msg.style.color = "green";
                 } else {
                     msg.innerText = "Order Failed: " + (result.message || JSON.stringify(result));
@@ -456,87 +401,18 @@ HTML_TEMPLATE = """
             loading.classList.add('hidden'); table.classList.remove('hidden');
             trades.forEach(trade => {
                 const row = document.createElement('tr');
-                row.innerHTML = `<td>${trade.trade_id || trade.tradeid || '-'}</td><td>${trade.order_id || trade.orderid || '-'}</td><td>${trade.trading_symbol || trade.symbol || '-'}</td><td>${trade.quantity || trade.traded_quantity || '0'}</td><td>${trade.price || trade.trade_price || '0.00'}</td><td>${trade.trade_time || trade.time || '-'}</td></td>`;
+                row.innerHTML = `<td>${trade.trade_id || trade.tradeid || '-'}</td><td>${trade.order_id || trade.orderid || '-'}</td><td>${trade.trading_symbol || trade.symbol || '-'}</td><td>${trade.quantity || trade.traded_quantity || '0'}</td><td>${trade.price || trade.trade_price || '0.00'}</td><td>${trade.trade_time || trade.time || '-'}</td></tr>`;
                 tbody.appendChild(row);
             });
         }
 
-        async function fetchOptionChain(showLoading = false) {
-            if (currentTab !== 'optionchain') return;
-
-            const symbol = document.getElementById('oc_symbol').value;
-            const range = document.getElementById('oc_strike_range').value;
-            const loading = document.getElementById('loading');
-            const section = document.getElementById('oc-section');
-            
-            if(showLoading) { loading.innerText = "Loading Option Chain..."; loading.classList.remove('hidden'); }
-
-            try {
-                const url = `/api/option_chain?symbol=${symbol}&strike_range=${range}`;
-                const response = await fetch(url);
-                const data = await response.json();
-                
-                if (!response.ok || data.error) {
-                    throw new Error(data.error || "API Error");
-                }
-                
-                renderOptionChain(data);
-            } catch (err) { 
-                console.error(err);
-                loading.innerText = "Error: " + err.message; 
-                loading.classList.remove('hidden');
-                section.classList.add('hidden');
-            }
-        }
-
-        function renderOptionChain(data) {
-            const tbody = document.getElementById('oc-body');
-            const table = document.getElementById('oc-table');
-            const loading = document.getElementById('loading');
-            const section = document.getElementById('oc-section');
-
-            tbody.innerHTML = '';
-            
-            if (!Array.isArray(data)) {
-                loading.innerText = "Invalid data format received.";
-                loading.classList.remove('hidden');
-                section.classList.add('hidden');
-                return;
-            }
-
-            if (data.length === 0) { 
-                loading.innerText = "No option chain data found."; 
-                loading.classList.remove('hidden'); 
-                section.classList.add('hidden'); 
-                return; 
-            }
-
-            loading.classList.add('hidden'); 
-            section.classList.remove('hidden');
-
-            data.forEach(row => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${row.ce_oi_chng || '-'}</td>
-                    <td>${row.ce_oi || '-'}</td>
-                    <td class="oc-ce-ltp">${row.ce_ltp}</td>
-                    <td style="background-color: #f8f9fa; font-weight:bold;">${row.strike}</td>
-                    <td class="oc-pe-ltp">${row.pe_ltp}</td>
-                    <td>${row.pe_oi || '-'}</td>
-                    <td>${row.pe_oi_chng || '-'}</td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-
+        // Auto-refresh logic
         {% if session.get('logged_in') %}
         setInterval(() => {
             if(currentTab === 'positions') fetchPositions();
             else if(currentTab === 'orders') fetchOrderBook();
             else if(currentTab === 'trades') fetchTradeBook();
-            else if(currentTab === 'optionchain') fetchOptionChain(false);
         }, 3000);
-        
         fetchPositions();
         {% endif %}
     </script>
@@ -561,56 +437,13 @@ def login():
         mconnect_obj = MConnect()
         logging.info(f"Attempting login with Key: {API_KEY}")
         res = mconnect_obj.verify_totp(API_KEY, totp)
-        
-        access_token = None
-        try:
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, dict):
-                    access_token = data.get('access_token') or data.get('data', {}).get('access_token')
-        except Exception as e:
-            logging.error(f"Could not extract access token: {e}")
-
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "success":
                 session['logged_in'] = True
                 unique_sid = str(uuid.uuid4())
                 session['sid'] = unique_sid 
-                
-                try:
-                    logging.info("Downloading instruments...")
-                    inst_res = mconnect_obj.get_instruments()
-                    csv = io.BytesIO(inst_res)
-                    df_instruments = pd.read_csv(csv)
-                    
-                    token_col = None
-                    for col in ["token","instrument_token","symboltoken","instrumenttoken"]:
-                        if col in df_instruments.columns:
-                            token_col = col
-                            break
-                    
-                    if not token_col:
-                        logging.error("Could not find token column in CSV.")
-                        return render_template_string(HTML_TEMPLATE, api_key=API_KEY, error="Instrument CSV format error.")
-
-                    logging.info(f"Instruments downloaded. Token Column: {token_col}")
-                    
-                    ACTIVE_SESSIONS[unique_sid] = {
-                        "mconnect": mconnect_obj,
-                        "instruments": df_instruments,
-                        "token_col": token_col,
-                        "access_token": access_token
-                    }
-                except Exception as e:
-                    logging.error(f"Failed to download instruments: {e}")
-                    ACTIVE_SESSIONS[unique_sid] = {
-                        "mconnect": mconnect_obj,
-                        "instruments": None,
-                        "token_col": None,
-                        "access_token": access_token
-                    }
-
+                ACTIVE_SESSIONS[unique_sid] = mconnect_obj
                 return redirect(url_for('index'))
             else:
                 return render_template_string(HTML_TEMPLATE, api_key=API_KEY, error=data.get("message", "Login Failed"))
@@ -631,10 +464,8 @@ def logout():
 @app.route("/api/positions")
 def get_positions():
     if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
-    sid = session['sid']; session_data = ACTIVE_SESSIONS.get(sid)
-    if not session_data: return jsonify({"error": "Session expired"})
-    mconnect_obj = session_data['mconnect']
-    
+    sid = session['sid']; mconnect_obj = ACTIVE_SESSIONS.get(sid)
+    if not mconnect_obj: return jsonify({"error": "Session expired"})
     try:
         res = mconnect_obj.get_net_position()
         if res.status_code == 200:
@@ -646,10 +477,8 @@ def get_positions():
 @app.route("/api/order_book")
 def get_order_book():
     if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
-    sid = session['sid']; session_data = ACTIVE_SESSIONS.get(sid)
-    if not session_data: return jsonify({"error": "Session expired"})
-    mconnect_obj = session_data['mconnect']
-    
+    sid = session['sid']; mconnect_obj = ACTIVE_SESSIONS.get(sid)
+    if not mconnect_obj: return jsonify({"error": "Session expired"})
     try:
         res = mconnect_obj.get_order_book()
         if res.status_code == 200:
@@ -661,10 +490,8 @@ def get_order_book():
 @app.route("/api/order_details/<order_id>")
 def get_order_details(order_id):
     if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
-    sid = session['sid']; session_data = ACTIVE_SESSIONS.get(sid)
-    if not session_data: return jsonify({"error": "Session expired"})
-    mconnect_obj = session_data['mconnect']
-    
+    sid = session['sid']; mconnect_obj = ACTIVE_SESSIONS.get(sid)
+    if not mconnect_obj: return jsonify({"error": "Session expired"})
     try:
         res = mconnect_obj.get_order_details(order_id)
         if res.status_code == 200: return jsonify(res.json())
@@ -674,10 +501,8 @@ def get_order_details(order_id):
 @app.route("/api/trade_book")
 def get_trade_book():
     if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
-    sid = session['sid']; session_data = ACTIVE_SESSIONS.get(sid)
-    if not session_data: return jsonify({"error": "Session expired"})
-    mconnect_obj = session_data['mconnect']
-    
+    sid = session['sid']; mconnect_obj = ACTIVE_SESSIONS.get(sid)
+    if not mconnect_obj: return jsonify({"error": "Session expired"})
     try:
         res = mconnect_obj.get_trade_book()
         if res.status_code == 200:
@@ -686,250 +511,44 @@ def get_trade_book():
         return jsonify({"error": f"API Error: {res.status_code}"})
     except Exception as e: return jsonify({"error": str(e)})
 
-@app.route("/api/option_chain")
-def get_option_chain_api():
-    if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
-    
-    sid = session['sid']
-    session_data = ACTIVE_SESSIONS.get(sid)
-    if not session_data: return jsonify({"error": "Session expired"})
-    
-    mconnect_obj = session_data['mconnect']
-    df = session_data.get('instruments')
-    token_col = session_data.get('token_col')
-    
-    if df is None or token_col is None:
-        return jsonify({"error": "Instruments not loaded or Token Column missing. Please logout and login again."})
-
-    try:
-        symbol = request.args.get('symbol', 'NIFTY')
-        strike_range_count = int(request.args.get('strike_range', 3)) # Default 3
-        
-        nifty = df[
-            (df["segment"] == "OPTIDX") &
-            (df["exchange"] == "NFO") &
-            (df["tradingsymbol"].str.startswith(symbol))
-        ]
-
-        if nifty.empty:
-            return jsonify({"error": f"No options found for {symbol}. Check Symbol name."})
-
-        exp_list = nifty["expiry"].dropna().unique().tolist()
-        exp_list.sort()
-        nearest_exp = exp_list[0]
-        
-        nifty_exp = nifty[nifty["expiry"] == nearest_exp]
-
-        index_data = df[
-            (df["segment"] == "INDEX") & 
-            (df["exchange"] == "NSE") & 
-            (df["tradingsymbol"].str.startswith(symbol))
-        ]
-        
-        spot_price = 0
-        if not index_data.empty:
-            index_token = str(index_data.iloc[0][token_col])
-            try:
-                quote_res = mconnect_obj.get_quotes([index_token]) 
-                if quote_res.status_code == 200:
-                    quote_json = quote_res.json()
-                    if isinstance(quote_json, dict) and 'data' in quote_json and isinstance(quote_json['data'], list):
-                        spot_price = float(quote_json['data'][0].get('ltp', 0))
-                    elif isinstance(quote_json, list) and len(quote_json) > 0:
-                        spot_price = float(quote_json[0].get('ltp', 0))
-            except Exception as e:
-                logging.warning(f"Could not fetch spot price: {e}")
-        
-        if spot_price == 0:
-            all_strikes = nifty_exp["strike"].unique()
-            if len(all_strikes) > 0:
-                spot_price = (min(all_strikes) + max(all_strikes)) / 2
-
-        strike_interval = 50 
-        if symbol == "BANKNIFTY": strike_interval = 100
-        elif symbol == "FINNIFTY": strike_interval = 50
-        elif symbol == "MIDCPNIFTY": strike_interval = 25
-        
-        atm_strike = round(spot_price / strike_interval) * strike_interval
-        
-        lower_strike = atm_strike - (strike_range_count * strike_interval)
-        upper_strike = atm_strike + (strike_range_count * strike_interval)
-
-        strike_range_df = nifty_exp[
-            (nifty_exp["strike"] >= lower_strike) &
-            (nifty_exp["strike"] <= upper_strike)
-        ]
-
-        if "option_type" in strike_range_df.columns:
-            ce_options = strike_range_df[strike_range_df["option_type"] == "CE"]
-            pe_options = strike_range_df[strike_range_df["option_type"] == "PE"]
-        else:
-            ce_options = strike_range_df[strike_range_df["tradingsymbol"].str.endswith("CE")]
-            pe_options = strike_range_df[strike_range_df["tradingsymbol"].str.endswith("PE")]
-
-        all_tokens = ce_options[token_col].tolist() + pe_options[token_col].tolist()
-        
-        price_map = {}
-        
-        if all_tokens:
-            all_tokens = [str(t) for t in all_tokens]
-            logging.info(f"Requesting quotes for {len(all_tokens)} tokens")
-            
-            try:
-                quote_res = mconnect_obj.get_quotes(all_tokens)
-                
-                # EXPLICIT ERROR HANDLING FOR QUOTE API
-                if quote_res.status_code != 200:
-                    logging.error(f"Quote API failed with {quote_res.status_code}: {quote_res.text}")
-                    return jsonify({"error": f"Quote API Failed: {quote_res.status_code} - {quote_res.text}"})
-                
-                q_data = quote_res.json()
-                q_list = []
-                
-                if isinstance(q_data, dict):
-                    if q_data.get('status') == 'error':
-                        return jsonify({"error": f"Quote API Error: {q_data.get('message', 'Unknown')}"})
-                    if 'data' in q_data:
-                        q_list = q_data['data']
-                    else:
-                        logging.warning(f"Unexpected quote dict structure: {q_data.keys()}")
-                elif isinstance(q_data, list):
-                    q_list = q_data
-
-                if isinstance(q_list, list):
-                    for item in q_list:
-                        if not isinstance(item, dict): continue
-                        tk = item.get('symboltoken') or item.get('instrument_token') or item.get('token')
-                        if tk:
-                            tk = str(tk)
-                            price_map[tk] = {
-                                'ltp': item.get('ltp', 0),
-                                'oi': item.get('oi', 0),
-                                'oi_chng': item.get('change_oi', 0)
-                            }
-            except Exception as e:
-                logging.exception("Error fetching option quotes")
-                return jsonify({"error": f"Exception fetching quotes: {str(e)}"})
-
-        response_data = []
-        ce_options = ce_options.sort_values('strike')
-        pe_options = pe_options.sort_values('strike')
-
-        for strike in sorted(strike_range_df['strike'].unique()):
-            row = {'strike': strike}
-            
-            ce_row = ce_options[ce_options['strike'] == strike]
-            if not ce_row.empty:
-                ce_token = str(ce_row.iloc[0][token_col])
-                ce_info = price_map.get(ce_token, {})
-                row['ce_ltp'] = ce_info.get('ltp', 0)
-                row['ce_oi'] = ce_info.get('oi', 0)
-                row['ce_oi_chng'] = ce_info.get('oi_chng', 0)
-            else:
-                row['ce_ltp'] = 0
-                row['ce_oi'] = 0
-                row['ce_oi_chng'] = 0
-
-            pe_row = pe_options[pe_options['strike'] == strike]
-            if not pe_row.empty:
-                pe_token = str(pe_row.iloc[0][token_col])
-                pe_info = price_map.get(pe_token, {})
-                row['pe_ltp'] = pe_info.get('ltp', 0)
-                row['pe_oi'] = pe_info.get('oi', 0)
-                row['pe_oi_chng'] = pe_info.get('oi_chng', 0)
-            else:
-                row['pe_ltp'] = 0
-                row['pe_oi'] = 0
-                row['pe_oi_chng'] = 0
-            
-            response_data.append(row)
-
-        return jsonify(response_data)
-
-    except Exception as e:
-        logging.exception("Option Chain Error")
-        return jsonify({"error": str(e)})
-
 @app.route("/api/place_order", methods=["POST"])
 def place_order():
     if 'logged_in' not in session or 'sid' not in session:
         return jsonify({"error": "Not logged in"})
 
     sid = session['sid']
-    session_data = ACTIVE_SESSIONS.get(sid)
-    if not session_data: return jsonify({"error": "Session expired"})
-    
-    access_token = session_data.get('access_token')
-    if not access_token:
-        logging.error("Access Token missing. Cannot place order via raw API.")
-        return jsonify({"error": "Access Token missing. Please logout and login again."})
+    mconnect_obj = ACTIVE_SESSIONS.get(sid)
+
+    if not mconnect_obj:
+        return jsonify({"error": "Session expired. Please login again."})
 
     try:
         req_data = request.json
         
-        variety = req_data.get('variety', 'regular')
-        url = f'https://api.mstock.trade/openapi/typea/orders/{variety}'
-        
-        payload = {
-            'tradingsymbol': req_data.get('tradingsymbol'),
-            'exchange': req_data.get('exchange'),
-            'transaction_type': req_data.get('transaction_type'),
-            'order_type': req_data.get('order_type'),
-            'quantity': req_data.get('quantity'),
-            'product': req_data.get('product'),
-            'validity': req_data.get('validity'),
-            'price': req_data.get('price'),
-            'variety': variety
-        }
-        
-        headers = {
-            'X-Mirae-Version': '1',
-            'Authorization': f'token {API_KEY}:{access_token}',
-            'Content-Type': 'application/x-www-form-urlencoded',
-        }
-        
-        logging.info(f"Placing Order: {url} with payload {payload}")
-        
-        response = requests.post(
-            url,
-            headers=headers,
-            data=payload
+        # Using SDK place_order method
+        res = mconnect_obj.place_order(
+            tradingsymbol=req_data.get('tradingsymbol'),
+            exchange=req_data.get('exchange'),
+            transaction_type=req_data.get('transaction_type'),
+            order_type=req_data.get('order_type'),
+            quantity=req_data.get('quantity'),
+            product=req_data.get('product'),
+            validity=req_data.get('validity'),
+            price=req_data.get('price'),
+            variety=req_data.get('variety')
         )
         
-        # Handle JSON parsing safely
-        try:
-            resp_json = response.json()
-        except ValueError:
-            resp_json = {"raw_response": response.text}
-
-        logging.info(f"Order Response: {resp_json}")
-        
-        # FIX FOR LIST OBJECT ERROR
-        if isinstance(resp_json, list):
-            # If API returns a list, try to extract order info from the first item
-            if len(resp_json) > 0 and isinstance(resp_json[0], dict):
-                first_item = resp_json[0]
-                if "orderid" in first_item or "order_id" in first_item:
-                    return jsonify({"status": "success", "data": first_item})
-                else:
-                    # List of errors?
-                    return jsonify({"status": "error", "message": str(resp_json)})
-        
-        # Standard Dict handling
-        if isinstance(resp_json, dict):
-            if resp_json.get("status") == "success":
-                return jsonify(resp_json)
-            else:
-                return jsonify({
-                    "status": "error", 
-                    "message": resp_json.get("message", "Unknown API Error"),
-                    "details": resp_json
-                })
+        if res.status_code == 200:
+            return jsonify(res.json())
         else:
-            return jsonify({"error": "Unknown API Response Format", "details": str(resp_json)})
+            try:
+                err_data = res.json()
+                return jsonify({"status": "error", "message": err_data})
+            except:
+                return jsonify({"status": "error", "message": f"HTTP {res.status_code}"})
             
     except Exception as e:
-        logging.exception("Place Order Error (Raw API)")
+        logging.exception("Place Order Error")
         return jsonify({"error": str(e)})
 
 if __name__ == "__main__":
