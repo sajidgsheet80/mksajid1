@@ -3,7 +3,7 @@ import logging
 import uuid
 import io
 import pandas as pd
-import requests  # ADDED FOR RAW API CALLS
+import requests
 from flask import Flask, render_template_string, request, session, jsonify, redirect, url_for
 from tradingapi_a.mconnect import MConnect
 
@@ -184,7 +184,8 @@ HTML_TEMPLATE = """
                 </div>
                 <div>
                     <label>Strikes Range (±)</label>
-                    <input type="number" id="oc_strike_range" value="5" min="1" max="20">
+                    <!-- Reduced default to 3 to prevent API limit errors -->
+                    <input type="number" id="oc_strike_range" value="3" min="1" max="20">
                 </div>
                 <div>
                     <label>&nbsp;</label>
@@ -561,12 +562,10 @@ def login():
         logging.info(f"Attempting login with Key: {API_KEY}")
         res = mconnect_obj.verify_totp(API_KEY, totp)
         
-        # EXTRACT ACCESS TOKEN FOR RAW API CALLS
         access_token = None
         try:
             if res.status_code == 200:
                 data = res.json()
-                # The structure is usually data.data.access_token or data.access_token
                 if isinstance(data, dict):
                     access_token = data.get('access_token') or data.get('data', {}).get('access_token')
         except Exception as e:
@@ -579,7 +578,6 @@ def login():
                 unique_sid = str(uuid.uuid4())
                 session['sid'] = unique_sid 
                 
-                # DOWNLOAD INSTRUMENTS AND DETECT TOKEN COLUMN
                 try:
                     logging.info("Downloading instruments...")
                     inst_res = mconnect_obj.get_instruments()
@@ -602,7 +600,7 @@ def login():
                         "mconnect": mconnect_obj,
                         "instruments": df_instruments,
                         "token_col": token_col,
-                        "access_token": access_token # STORE ACCESS TOKEN
+                        "access_token": access_token
                     }
                 except Exception as e:
                     logging.error(f"Failed to download instruments: {e}")
@@ -705,7 +703,7 @@ def get_option_chain_api():
 
     try:
         symbol = request.args.get('symbol', 'NIFTY')
-        strike_range_count = int(request.args.get('strike_range', 5))
+        strike_range_count = int(request.args.get('strike_range', 3)) # Default 3
         
         nifty = df[
             (df["segment"] == "OPTIDX") &
@@ -773,40 +771,45 @@ def get_option_chain_api():
         
         price_map = {}
         
-        try:
-            if all_tokens:
-                all_tokens = [str(t) for t in all_tokens]
-                logging.info(f"Requesting quotes for {len(all_tokens)} tokens")
+        if all_tokens:
+            all_tokens = [str(t) for t in all_tokens]
+            logging.info(f"Requesting quotes for {len(all_tokens)} tokens")
+            
+            try:
                 quote_res = mconnect_obj.get_quotes(all_tokens)
                 
-                if quote_res.status_code == 200:
-                    q_data = quote_res.json()
-                    q_list = []
-                    
-                    if isinstance(q_data, dict):
-                        if q_data.get('status') == 'error':
-                            return jsonify({"error": f"Quote API Error: {q_data.get('message', 'Unknown')}"})
-                        if 'data' in q_data:
-                            q_list = q_data['data']
-                        else:
-                            logging.warning(f"Unexpected quote dict structure: {q_data.keys()}")
-                    elif isinstance(q_data, list):
-                        q_list = q_data
+                # EXPLICIT ERROR HANDLING FOR QUOTE API
+                if quote_res.status_code != 200:
+                    logging.error(f"Quote API failed with {quote_res.status_code}: {quote_res.text}")
+                    return jsonify({"error": f"Quote API Failed: {quote_res.status_code} - {quote_res.text}"})
+                
+                q_data = quote_res.json()
+                q_list = []
+                
+                if isinstance(q_data, dict):
+                    if q_data.get('status') == 'error':
+                        return jsonify({"error": f"Quote API Error: {q_data.get('message', 'Unknown')}"})
+                    if 'data' in q_data:
+                        q_list = q_data['data']
+                    else:
+                        logging.warning(f"Unexpected quote dict structure: {q_data.keys()}")
+                elif isinstance(q_data, list):
+                    q_list = q_data
 
-                    if isinstance(q_list, list):
-                        for item in q_list:
-                            if not isinstance(item, dict): continue
-                            tk = item.get('symboltoken') or item.get('instrument_token') or item.get('token')
-                            if tk:
-                                tk = str(tk)
-                                price_map[tk] = {
-                                    'ltp': item.get('ltp', 0),
-                                    'oi': item.get('oi', 0),
-                                    'oi_chng': item.get('change_oi', 0)
-                                }
-        except Exception as e:
-            logging.exception("Error fetching option quotes")
-            pass
+                if isinstance(q_list, list):
+                    for item in q_list:
+                        if not isinstance(item, dict): continue
+                        tk = item.get('symboltoken') or item.get('instrument_token') or item.get('token')
+                        if tk:
+                            tk = str(tk)
+                            price_map[tk] = {
+                                'ltp': item.get('ltp', 0),
+                                'oi': item.get('oi', 0),
+                                'oi_chng': item.get('change_oi', 0)
+                            }
+            except Exception as e:
+                logging.exception("Error fetching option quotes")
+                return jsonify({"error": f"Exception fetching quotes: {str(e)}"})
 
         response_data = []
         ce_options = ce_options.sort_values('strike')
@@ -856,7 +859,6 @@ def place_order():
     session_data = ACTIVE_SESSIONS.get(sid)
     if not session_data: return jsonify({"error": "Session expired"})
     
-    # Retrieve access token
     access_token = session_data.get('access_token')
     if not access_token:
         logging.error("Access Token missing. Cannot place order via raw API.")
@@ -865,12 +867,9 @@ def place_order():
     try:
         req_data = request.json
         
-        # Construct the URL based on variety (Regular, AMO, Stoploss)
-        # URL pattern: https://api.mstock.trade/openapi/typea/orders/{variety}
         variety = req_data.get('variety', 'regular')
         url = f'https://api.mstock.trade/openapi/typea/orders/{variety}'
         
-        # Prepare Payload
         payload = {
             'tradingsymbol': req_data.get('tradingsymbol'),
             'exchange': req_data.get('exchange'),
@@ -880,37 +879,54 @@ def place_order():
             'product': req_data.get('product'),
             'validity': req_data.get('validity'),
             'price': req_data.get('price'),
-            'variety': variety  # Included in body as per reference
+            'variety': variety
         }
         
-        # Prepare Headers
         headers = {
             'X-Mirae-Version': '1',
             'Authorization': f'token {API_KEY}:{access_token}',
             'Content-Type': 'application/x-www-form-urlencoded',
         }
         
-        logging.info(f"Placing Order via Raw API: {url} with payload {payload}")
+        logging.info(f"Placing Order: {url} with payload {payload}")
         
-        # Make API request
         response = requests.post(
             url,
             headers=headers,
             data=payload
         )
         
-        resp_json = response.json()
+        # Handle JSON parsing safely
+        try:
+            resp_json = response.json()
+        except ValueError:
+            resp_json = {"raw_response": response.text}
+
         logging.info(f"Order Response: {resp_json}")
         
-        if resp_json.get("status") == "success":
-            return jsonify(resp_json)
+        # FIX FOR LIST OBJECT ERROR
+        if isinstance(resp_json, list):
+            # If API returns a list, try to extract order info from the first item
+            if len(resp_json) > 0 and isinstance(resp_json[0], dict):
+                first_item = resp_json[0]
+                if "orderid" in first_item or "order_id" in first_item:
+                    return jsonify({"status": "success", "data": first_item})
+                else:
+                    # List of errors?
+                    return jsonify({"status": "error", "message": str(resp_json)})
+        
+        # Standard Dict handling
+        if isinstance(resp_json, dict):
+            if resp_json.get("status") == "success":
+                return jsonify(resp_json)
+            else:
+                return jsonify({
+                    "status": "error", 
+                    "message": resp_json.get("message", "Unknown API Error"),
+                    "details": resp_json
+                })
         else:
-            # Return the error message from the API
-            return jsonify({
-                "status": "error", 
-                "message": resp_json.get("message", "Unknown API Error"),
-                "details": resp_json
-            })
+            return jsonify({"error": "Unknown API Response Format", "details": str(resp_json)})
             
     except Exception as e:
         logging.exception("Place Order Error (Raw API)")
