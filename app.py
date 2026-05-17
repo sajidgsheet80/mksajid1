@@ -37,7 +37,7 @@ HTML_TEMPLATE = """
         
         /* Form Styles */
         .login-box { max-width: 400px; margin: 50px auto; text-align: center; }
-        input[type="text"], input[type="password"], input[type="number"], select { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        input[type="text"], input[type="password"], input[type="number"], input[type="date"], select { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
         button.btn-primary { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
         button.btn-primary:hover { background-color: #0056b3; }
         button.btn-logout { background-color: #dc3545; color: white; padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; float: right; }
@@ -49,16 +49,22 @@ HTML_TEMPLATE = """
         .btn-place:hover { background-color: #218838; }
         
         /* Tab Styles */
-        .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; }
-        .tab-btn { padding: 10px 20px; background: none; border: none; font-size: 16px; cursor: pointer; color: #555; border-bottom: 3px solid transparent; transition: all 0.3s; }
+        .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; overflow-x: auto; }
+        .tab-btn { padding: 10px 20px; background: none; border: none; font-size: 16px; cursor: pointer; color: #555; border-bottom: 3px solid transparent; transition: all 0.3s; white-space: nowrap; }
         .tab-btn:hover { color: #007bff; }
         .tab-btn.active { color: #007bff; border-bottom: 3px solid #007bff; font-weight: bold; }
 
         /* Table Styles */
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+        th, td { padding: 10px; text-align: center; border-bottom: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #555; font-weight: 600; }
         tr:hover { background-color: #f1f1f1; }
+        
+        /* Option Chain Specifics */
+        .oc-ce-ltp { color: green; font-weight: bold; }
+        .oc-pe-ltp { color: red; font-weight: bold; }
+        .oc-controls { display: flex; gap: 10px; margin-bottom: 15px; align-items: flex-end; }
+        .oc-controls > div { flex: 1; }
         
         /* JSON Output Styles */
         pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 13px; margin-top: 10px; }
@@ -104,6 +110,7 @@ HTML_TEMPLATE = """
             <button class="tab-btn active" onclick="switchTab('positions')" id="btn-positions">Net Positions</button>
             <button class="tab-btn" onclick="switchTab('orders')" id="btn-orders">Order Book</button>
             <button class="tab-btn" onclick="switchTab('trades')" id="btn-trades">Trade Book</button>
+            <button class="tab-btn" onclick="switchTab('optionchain')" id="btn-optionchain">Option Chain</button>
             <button class="tab-btn" onclick="switchTab('place')" id="btn-place">Place Order</button>
         </div>
 
@@ -160,6 +167,50 @@ HTML_TEMPLATE = """
             </thead>
             <tbody id="trade-body"></tbody>
         </table>
+
+        <!-- OPTION CHAIN SECTION -->
+        <div id="oc-section" class="hidden">
+            <div class="oc-controls">
+                <div>
+                    <label>Index Symbol</label>
+                    <select id="oc_symbol">
+                        <option value="NIFTY">NIFTY</option>
+                        <option value="BANKNIFTY">BANKNIFTY</option>
+                        <option value="FINNIFTY">FINNIFTY</option>
+                        <option value="MIDCPNIFTY">MIDCPNIFTY</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Expiry Date (YYYY-MM-DD)</label>
+                    <!-- Optional: Leave empty for current weekly expiry -->
+                    <input type="text" id="oc_expiry" placeholder="e.g. 2024-05-30 (Optional)">
+                </div>
+                <div>
+                    <label>&nbsp;</label>
+                    <button class="btn-primary" style="padding: 12px;" onclick="fetchOptionChain(true)">Refresh</button>
+                </div>
+            </div>
+            
+            <table id="oc-table">
+                <thead>
+                    <tr>
+                        <th colspan="3" style="color: green; border-bottom: 2px solid #ddd;">CALLS</th>
+                        <th style="background-color: #e9ecef;">Strike</th>
+                        <th colspan="3" style="color: red; border-bottom: 2px solid #ddd;">PUTS</th>
+                    </tr>
+                    <tr>
+                        <th>OI Chg</th>
+                        <th>OI</th>
+                        <th>LTP</th>
+                        <th style="background-color: #f8f9fa;">Price</th>
+                        <th>LTP</th>
+                        <th>OI</th>
+                        <th>OI Chg</th>
+                    </tr>
+                </thead>
+                <tbody id="oc-body"></tbody>
+            </table>
+        </div>
 
         <!-- PLACE ORDER FORM -->
         <div id="place-section" class="hidden" style="background: #f9f9f9; padding: 20px; border-radius: 8px;">
@@ -244,6 +295,7 @@ HTML_TEMPLATE = """
             document.getElementById('position-table').classList.add('hidden');
             document.getElementById('order-section').classList.add('hidden');
             document.getElementById('trade-table').classList.add('hidden');
+            document.getElementById('oc-section').classList.add('hidden');
             document.getElementById('place-section').classList.add('hidden');
             
             document.getElementById('loading').classList.add('hidden');
@@ -252,6 +304,7 @@ HTML_TEMPLATE = """
             if(tabName === 'positions') fetchPositions();
             else if(tabName === 'orders') fetchOrderBook();
             else if(tabName === 'trades') fetchTradeBook();
+            else if(tabName === 'optionchain') fetchOptionChain(true);
             else if(tabName === 'place') {
                 document.getElementById('place-section').classList.remove('hidden');
             }
@@ -314,6 +367,9 @@ HTML_TEMPLATE = """
             }
         }
 
+        // ==========================
+        // POSITIONS
+        // ==========================
         async function fetchPositions() {
             if (currentTab !== 'positions') return;
             try {
@@ -343,6 +399,9 @@ HTML_TEMPLATE = """
             });
         }
 
+        // ==========================
+        // ORDER BOOK
+        // ==========================
         async function fetchOrderBook() {
             if (currentTab !== 'orders') return;
             try {
@@ -381,6 +440,9 @@ HTML_TEMPLATE = """
             } catch (err) { resultDiv.innerHTML = "Error fetching details."; }
         }
 
+        // ==========================
+        // TRADE BOOK
+        // ==========================
         async function fetchTradeBook() {
             if (currentTab !== 'trades') return;
             try {
@@ -406,13 +468,115 @@ HTML_TEMPLATE = """
             });
         }
 
-        // Auto-refresh logic
+        // ==========================
+        // OPTION CHAIN
+        // ==========================
+        async function fetchOptionChain(showLoading = false) {
+            if (currentTab !== 'optionchain') return;
+
+            const symbol = document.getElementById('oc_symbol').value;
+            const expiry = document.getElementById('oc_expiry').value;
+            const loading = document.getElementById('loading');
+            const section = document.getElementById('oc-section');
+            
+            if(showLoading) { loading.innerText = "Loading Option Chain..."; loading.classList.remove('hidden'); }
+
+            try {
+                const url = `/api/option_chain?symbol=${symbol}&expiry=${expiry}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                renderOptionChain(data);
+            } catch (err) { 
+                loading.innerText = "Error connecting to Option Chain API."; 
+                loading.classList.remove('hidden');
+                section.classList.add('hidden');
+            }
+        }
+
+        function renderOptionChain(data) {
+            const tbody = document.getElementById('oc-body');
+            const table = document.getElementById('oc-table');
+            const loading = document.getElementById('loading');
+            const section = document.getElementById('oc-section');
+
+            tbody.innerHTML = '';
+            
+            if (data.error) { 
+                loading.innerText = "Error: " + data.error; 
+                loading.classList.remove('hidden'); 
+                section.classList.add('hidden'); 
+                return; 
+            }
+            
+            // Handle different response structures (Array vs Object with 'data' key)
+            const chainData = Array.isArray(data) ? data : (data.data || []);
+
+            if (chainData.length === 0) { 
+                loading.innerText = "No option chain data found. Check expiry date."; 
+                loading.classList.remove('hidden'); 
+                section.classList.add('hidden'); 
+                return; 
+            }
+
+            loading.classList.add('hidden'); 
+            section.classList.remove('hidden');
+
+            chainData.forEach(row => {
+                // Helper to safely get values. 
+                // m.Stock API typically returns objects for CE and PE, or keys like 'ce_ltp', 'pe_ltp'
+                
+                // Parsing CE Data
+                let ceLtp = 0, ceOi = 0, ceOiChg = 0;
+                if(row.CE) {
+                    ceLtp = row.CE.ltp || row.CE.last_price || 0;
+                    ceOi = row.CE.oi || row.CE.open_interest || 0;
+                    ceOiChg = row.CE.change_oi || row.CE.oi_change || 0;
+                } else if(row.ce_ltp) { // Fallback for flat structure
+                    ceLtp = row.ce_ltp;
+                    ceOi = row.ce_oi || 0;
+                    ceOiChg = row.ce_oi_chng || 0;
+                }
+
+                // Parsing PE Data
+                let peLtp = 0, peOi = 0, peOiChg = 0;
+                if(row.PE) {
+                    peLtp = row.PE.ltp || row.PE.last_price || 0;
+                    peOi = row.PE.oi || row.PE.open_interest || 0;
+                    peOiChg = row.PE.change_oi || row.PE.oi_change || 0;
+                } else if(row.pe_ltp) { // Fallback
+                    peLtp = row.pe_ltp;
+                    peOi = row.pe_oi || 0;
+                    peOiChg = row.pe_oi_chng || 0;
+                }
+
+                const strike = row.strike_price || row.strike || 0;
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${ceOiChg}</td>
+                    <td>${ceOi}</td>
+                    <td class="oc-ce-ltp">${ceLtp}</td>
+                    <td style="background-color: #f8f9fa; font-weight:bold;">${strike}</td>
+                    <td class="oc-pe-ltp">${peLtp}</td>
+                    <td>${peOi}</td>
+                    <td>${peOiChg}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // ==========================
+        // AUTO-REFRESH LOGIC
+        // ==========================
         {% if session.get('logged_in') %}
         setInterval(() => {
             if(currentTab === 'positions') fetchPositions();
             else if(currentTab === 'orders') fetchOrderBook();
             else if(currentTab === 'trades') fetchTradeBook();
+            else if(currentTab === 'optionchain') fetchOptionChain(false); // false = don't show loading text on refresh
         }, 3000);
+        
+        // Initial load based on default tab
         fetchPositions();
         {% endif %}
     </script>
@@ -511,6 +675,40 @@ def get_trade_book():
         return jsonify({"error": f"API Error: {res.status_code}"})
     except Exception as e: return jsonify({"error": str(e)})
 
+@app.route("/api/option_chain")
+def get_option_chain_api():
+    if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
+    sid = session['sid']; mconnect_obj = ACTIVE_SESSIONS.get(sid)
+    if not mconnect_obj: return jsonify({"error": "Session expired"})
+
+    try:
+        symbol = request.args.get('symbol', 'NIFTY')
+        expiry = request.args.get('expiry')
+        
+        # Log for debugging
+        logging.info(f"Fetching Option Chain for {symbol}, Expiry: {expiry}")
+
+        # The method signature in tradingapi_a is typically get_option_chain(exchange, symbol, expiry)
+        # If expiry is empty string or None, the API usually defaults to the nearest expiry.
+        # Exchange for NIFTY Options is NFO
+        res = mconnect_obj.get_option_chain(exchange="NFO", tradingsymbol=symbol, expiry_date=expiry)
+        
+        if res.status_code == 200:
+            data = res.json()
+            # Option chains usually come as a list in 'data' or directly as a list
+            result = data.get('data', data) if isinstance(data, dict) else data
+            return jsonify(result)
+        else:
+            return jsonify({"error": f"API Error: {res.status_code} - {res.text}"})
+            
+    except AttributeError:
+        # Fallback if get_option_chain doesn't exist or has different signature
+        logging.error("Method get_option_chain not found on SDK object. Check library version.")
+        return jsonify({"error": "Option Chain method not supported by current library version."})
+    except Exception as e:
+        logging.exception("Option Chain Error")
+        return jsonify({"error": str(e)})
+
 @app.route("/api/place_order", methods=["POST"])
 def place_order():
     if 'logged_in' not in session or 'sid' not in session:
@@ -553,4 +751,3 @@ def place_order():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-
