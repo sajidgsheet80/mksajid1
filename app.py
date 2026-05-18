@@ -1,9 +1,15 @@
+The issue is likely occurring because the `get_quotes` API response does not match the hardcoded key `symboltoken` used in your code. Different broker APIs (or different versions of the wrapper) use different keys for the token identifier (e.g., `instrument_token`, `token`, `SymbolToken`). If the key doesn't match, the code fails to map the prices back to the options, resulting in empty data or zeros, making it appear as if the option chain is "not displaying."
 
+Here is the corrected code. I have updated the **Option Chain API route** to dynamically detect the correct token key and improved the error handling.
+
+```python
 import logging
 import uuid
-from flask import Flask, render_template_string, request, session, jsonify, redirect, url_for
-from tradingapi_a.mconnect import MConnect
+import io
 import pandas as pd
+from flask import Flask, render_template_string, request, session, jsonify, redirect, url_for
+# Ensure you have the tradingapi_a library installed
+from tradingapi_a.mconnect import MConnect
 
 # ==========================================
 # CONFIGURATION
@@ -37,7 +43,7 @@ HTML_TEMPLATE = """
         
         /* Form Styles */
         .login-box { max-width: 400px; margin: 50px auto; text-align: center; }
-        input[type="text"], input[type="password"], input[type="number"], select { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        input[type="text"], input[type="password"], input[type="number"], input[type="date"], select { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
         button.btn-primary { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
         button.btn-primary:hover { background-color: #0056b3; }
         button.btn-logout { background-color: #dc3545; color: white; padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; float: right; }
@@ -49,16 +55,22 @@ HTML_TEMPLATE = """
         .btn-place:hover { background-color: #218838; }
         
         /* Tab Styles */
-        .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; }
-        .tab-btn { padding: 10px 20px; background: none; border: none; font-size: 16px; cursor: pointer; color: #555; border-bottom: 3px solid transparent; transition: all 0.3s; }
+        .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; overflow-x: auto; }
+        .tab-btn { padding: 10px 20px; background: none; border: none; font-size: 16px; cursor: pointer; color: #555; border-bottom: 3px solid transparent; transition: all 0.3s; white-space: nowrap; }
         .tab-btn:hover { color: #007bff; }
         .tab-btn.active { color: #007bff; border-bottom: 3px solid #007bff; font-weight: bold; }
 
         /* Table Styles */
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+        th, td { padding: 10px; text-align: center; border-bottom: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #555; font-weight: 600; }
         tr:hover { background-color: #f1f1f1; }
+        
+        /* Option Chain Specifics */
+        .oc-ce-ltp { color: green; font-weight: bold; }
+        .oc-pe-ltp { color: red; font-weight: bold; }
+        .oc-controls { display: flex; gap: 10px; margin-bottom: 15px; align-items: flex-end; }
+        .oc-controls > div { flex: 1; }
         
         /* JSON Output Styles */
         pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 13px; margin-top: 10px; }
@@ -104,6 +116,7 @@ HTML_TEMPLATE = """
             <button class="tab-btn active" onclick="switchTab('positions')" id="btn-positions">Net Positions</button>
             <button class="tab-btn" onclick="switchTab('orders')" id="btn-orders">Order Book</button>
             <button class="tab-btn" onclick="switchTab('trades')" id="btn-trades">Trade Book</button>
+            <button class="tab-btn" onclick="switchTab('optionchain')" id="btn-optionchain">Option Chain</button>
             <button class="tab-btn" onclick="switchTab('place')" id="btn-place">Place Order</button>
         </div>
 
@@ -160,6 +173,49 @@ HTML_TEMPLATE = """
             </thead>
             <tbody id="trade-body"></tbody>
         </table>
+
+        <!-- OPTION CHAIN SECTION -->
+        <div id="oc-section" class="hidden">
+            <div class="oc-controls">
+                <div>
+                    <label>Index Symbol</label>
+                    <select id="oc_symbol">
+                        <option value="NIFTY">NIFTY</option>
+                        <option value="BANKNIFTY">BANKNIFTY</option>
+                        <option value="FINNIFTY">FINNIFTY</option>
+                        <option value="MIDCPNIFTY">MIDCPNIFTY</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Strikes Range (±)</label>
+                    <input type="number" id="oc_strike_range" value="10" min="5" max="50">
+                </div>
+                <div>
+                    <label>&nbsp;</label>
+                    <button class="btn-primary" style="padding: 12px;" onclick="fetchOptionChain(true)">Refresh</button>
+                </div>
+            </div>
+            
+            <table id="oc-table">
+                <thead>
+                    <tr>
+                        <th colspan="3" style="color: green; border-bottom: 2px solid #ddd;">CALLS</th>
+                        <th style="background-color: #e9ecef;">Strike</th>
+                        <th colspan="3" style="color: red; border-bottom: 2px solid #ddd;">PUTS</th>
+                    </tr>
+                    <tr>
+                        <th>OI Chg</th>
+                        <th>OI</th>
+                        <th>LTP</th>
+                        <th style="background-color: #f8f9fa;">Price</th>
+                        <th>LTP</th>
+                        <th>OI</th>
+                        <th>OI Chg</th>
+                    </tr>
+                </thead>
+                <tbody id="oc-body"></tbody>
+            </table>
+        </div>
 
         <!-- PLACE ORDER FORM -->
         <div id="place-section" class="hidden" style="background: #f9f9f9; padding: 20px; border-radius: 8px;">
@@ -244,6 +300,7 @@ HTML_TEMPLATE = """
             document.getElementById('position-table').classList.add('hidden');
             document.getElementById('order-section').classList.add('hidden');
             document.getElementById('trade-table').classList.add('hidden');
+            document.getElementById('oc-section').classList.add('hidden');
             document.getElementById('place-section').classList.add('hidden');
             
             document.getElementById('loading').classList.add('hidden');
@@ -252,6 +309,7 @@ HTML_TEMPLATE = """
             if(tabName === 'positions') fetchPositions();
             else if(tabName === 'orders') fetchOrderBook();
             else if(tabName === 'trades') fetchTradeBook();
+            else if(tabName === 'optionchain') fetchOptionChain(true);
             else if(tabName === 'place') {
                 document.getElementById('place-section').classList.remove('hidden');
             }
@@ -364,7 +422,7 @@ HTML_TEMPLATE = """
             loading.classList.add('hidden'); section.classList.remove('hidden');
             orders.forEach(order => {
                 const row = document.createElement('tr');
-                row.innerHTML = `<td>${order.order_id || order.orderid || '-'}</td><td>${order.trading_symbol || order.symbol || '-'}</td><td>${order.transaction_type || order.side || '-'}</td><td>${order.quantity || order.filled_quantity || '0'}</td><td>${order.price || order.average_price || '0.00'}</td><td><span style="padding: 2px 6px; border-radius: 4px; background: #e9ecef; font-size: 0.9em;">${order.status || '-'}</span></td></tr>`;
+                row.innerHTML = `<td>${order.order_id || order.orderid || '-'}</td><td>${order.trading_symbol || order.symbol || '-'}</td><td>${order.transaction_type || order.side || '-'}</td><td>${order.quantity || order.filled_quantity || '0'}</td><td>${order.price || order.average_price || '0.00'}</td><td><span style="padding: 2px 6px; border-radius: 4px; background: #e9ecef; font-size: 0.9em;">${order.status || '-'}</span></td></td>`;
                 tbody.appendChild(row);
             });
         }
@@ -401,18 +459,83 @@ HTML_TEMPLATE = """
             loading.classList.add('hidden'); table.classList.remove('hidden');
             trades.forEach(trade => {
                 const row = document.createElement('tr');
-                row.innerHTML = `<td>${trade.trade_id || trade.tradeid || '-'}</td><td>${trade.order_id || trade.orderid || '-'}</td><td>${trade.trading_symbol || trade.symbol || '-'}</td><td>${trade.quantity || trade.traded_quantity || '0'}</td><td>${trade.price || trade.trade_price || '0.00'}</td><td>${trade.trade_time || trade.time || '-'}</td></tr>`;
+                row.innerHTML = `<td>${trade.trade_id || trade.tradeid || '-'}</td><td>${trade.order_id || trade.orderid || '-'}</td><td>${trade.trading_symbol || trade.symbol || '-'}</td><td>${trade.quantity || trade.traded_quantity || '0'}</td><td>${trade.price || trade.trade_price || '0.00'}</td><td>${trade.trade_time || trade.time || '-'}</td></td>`;
                 tbody.appendChild(row);
             });
         }
 
-        // Auto-refresh logic
+        async function fetchOptionChain(showLoading = false) {
+            if (currentTab !== 'optionchain') return;
+
+            const symbol = document.getElementById('oc_symbol').value;
+            const range = document.getElementById('oc_strike_range').value;
+            const loading = document.getElementById('loading');
+            const section = document.getElementById('oc-section');
+            
+            if(showLoading) { loading.innerText = "Loading Option Chain..."; loading.classList.remove('hidden'); }
+
+            try {
+                const url = `/api/option_chain?symbol=${symbol}&strike_range=${range}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                renderOptionChain(data);
+            } catch (err) { 
+                loading.innerText = "Error connecting to Option Chain API."; 
+                loading.classList.remove('hidden');
+                section.classList.add('hidden');
+            }
+        }
+
+        function renderOptionChain(data) {
+            const tbody = document.getElementById('oc-body');
+            const table = document.getElementById('oc-table');
+            const loading = document.getElementById('loading');
+            const section = document.getElementById('oc-section');
+
+            tbody.innerHTML = '';
+            
+            if (data.error) { 
+                loading.innerText = "Error: " + data.error; 
+                loading.classList.remove('hidden'); 
+                section.classList.add('hidden'); 
+                return; 
+            }
+            
+            const chainData = Array.isArray(data) ? data : (data.data || []);
+
+            if (chainData.length === 0) { 
+                loading.innerText = "No option chain data found."; 
+                loading.classList.remove('hidden'); 
+                section.classList.add('hidden'); 
+                return; 
+            }
+
+            loading.classList.add('hidden'); 
+            section.classList.remove('hidden');
+
+            chainData.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${row.ce_oi_chng || '-'}</td>
+                    <td>${row.ce_oi || '-'}</td>
+                    <td class="oc-ce-ltp">${row.ce_ltp}</td>
+                    <td style="background-color: #f8f9fa; font-weight:bold;">${row.strike}</td>
+                    <td class="oc-pe-ltp">${row.pe_ltp}</td>
+                    <td>${row.pe_oi || '-'}</td>
+                    <td>${row.pe_oi_chng || '-'}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
         {% if session.get('logged_in') %}
         setInterval(() => {
             if(currentTab === 'positions') fetchPositions();
             else if(currentTab === 'orders') fetchOrderBook();
             else if(currentTab === 'trades') fetchTradeBook();
+            else if(currentTab === 'optionchain') fetchOptionChain(false);
         }, 3000);
+        
         fetchPositions();
         {% endif %}
     </script>
@@ -443,7 +566,41 @@ def login():
                 session['logged_in'] = True
                 unique_sid = str(uuid.uuid4())
                 session['sid'] = unique_sid 
-                ACTIVE_SESSIONS[unique_sid] = mconnect_obj
+                
+                # DOWNLOAD INSTRUMENTS AND DETECT TOKEN COLUMN
+                try:
+                    logging.info("Downloading instruments...")
+                    inst_res = mconnect_obj.get_instruments()
+                    csv = io.BytesIO(inst_res)
+                    df_instruments = pd.read_csv(csv)
+                    
+                    # DETECT TOKEN COLUMN NAME
+                    token_col = None
+                    for col in ["token","instrument_token","symboltoken","instrumenttoken"]:
+                        if col in df_instruments.columns:
+                            token_col = col
+                            break
+                    
+                    if not token_col:
+                        logging.error("Could not find token column in CSV.")
+                        return render_template_string(HTML_TEMPLATE, api_key=API_KEY, error="Instrument CSV format error: No token column found.")
+
+                    logging.info(f"Instruments downloaded. Detected Token Column: {token_col}")
+                    
+                    ACTIVE_SESSIONS[unique_sid] = {
+                        "mconnect": mconnect_obj,
+                        "instruments": df_instruments,
+                        "token_col": token_col
+                    }
+                except Exception as e:
+                    logging.error(f"Failed to download instruments: {e}")
+                    # Still allow login but with limited functionality
+                    ACTIVE_SESSIONS[unique_sid] = {
+                        "mconnect": mconnect_obj,
+                        "instruments": None,
+                        "token_col": None
+                    }
+
                 return redirect(url_for('index'))
             else:
                 return render_template_string(HTML_TEMPLATE, api_key=API_KEY, error=data.get("message", "Login Failed"))
@@ -464,8 +621,10 @@ def logout():
 @app.route("/api/positions")
 def get_positions():
     if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
-    sid = session['sid']; mconnect_obj = ACTIVE_SESSIONS.get(sid)
-    if not mconnect_obj: return jsonify({"error": "Session expired"})
+    sid = session['sid']; session_data = ACTIVE_SESSIONS.get(sid)
+    if not session_data: return jsonify({"error": "Session expired"})
+    mconnect_obj = session_data['mconnect']
+    
     try:
         res = mconnect_obj.get_net_position()
         if res.status_code == 200:
@@ -477,8 +636,10 @@ def get_positions():
 @app.route("/api/order_book")
 def get_order_book():
     if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
-    sid = session['sid']; mconnect_obj = ACTIVE_SESSIONS.get(sid)
-    if not mconnect_obj: return jsonify({"error": "Session expired"})
+    sid = session['sid']; session_data = ACTIVE_SESSIONS.get(sid)
+    if not session_data: return jsonify({"error": "Session expired"})
+    mconnect_obj = session_data['mconnect']
+    
     try:
         res = mconnect_obj.get_order_book()
         if res.status_code == 200:
@@ -490,8 +651,10 @@ def get_order_book():
 @app.route("/api/order_details/<order_id>")
 def get_order_details(order_id):
     if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
-    sid = session['sid']; mconnect_obj = ACTIVE_SESSIONS.get(sid)
-    if not mconnect_obj: return jsonify({"error": "Session expired"})
+    sid = session['sid']; session_data = ACTIVE_SESSIONS.get(sid)
+    if not session_data: return jsonify({"error": "Session expired"})
+    mconnect_obj = session_data['mconnect']
+    
     try:
         res = mconnect_obj.get_order_details(order_id)
         if res.status_code == 200: return jsonify(res.json())
@@ -501,8 +664,10 @@ def get_order_details(order_id):
 @app.route("/api/trade_book")
 def get_trade_book():
     if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
-    sid = session['sid']; mconnect_obj = ACTIVE_SESSIONS.get(sid)
-    if not mconnect_obj: return jsonify({"error": "Session expired"})
+    sid = session['sid']; session_data = ACTIVE_SESSIONS.get(sid)
+    if not session_data: return jsonify({"error": "Session expired"})
+    mconnect_obj = session_data['mconnect']
+    
     try:
         res = mconnect_obj.get_trade_book()
         if res.status_code == 200:
@@ -511,21 +676,195 @@ def get_trade_book():
         return jsonify({"error": f"API Error: {res.status_code}"})
     except Exception as e: return jsonify({"error": str(e)})
 
+@app.route("/api/option_chain")
+def get_option_chain_api():
+    if 'logged_in' not in session or 'sid' not in session: return jsonify({"error": "Not logged in"})
+    
+    sid = session['sid']
+    session_data = ACTIVE_SESSIONS.get(sid)
+    if not session_data: return jsonify({"error": "Session expired"})
+    
+    mconnect_obj = session_data['mconnect']
+    df = session_data.get('instruments')
+    token_col = session_data.get('token_col')
+    
+    if df is None or token_col is None:
+        return jsonify({"error": "Instruments not loaded or Token Column missing. Please logout and login again."})
+
+    try:
+        symbol = request.args.get('symbol', 'NIFTY')
+        strike_range_count = int(request.args.get('strike_range', 10))
+        
+        # 1. Filter for Index Options
+        nifty = df[
+            (df["segment"] == "OPTIDX") &
+            (df["exchange"] == "NFO") &
+            (df["tradingsymbol"].str.startswith(symbol))
+        ]
+
+        if nifty.empty:
+            return jsonify({"error": f"No options found for {symbol}"})
+
+        # 2. Find Nearest Expiry
+        exp_list = nifty["expiry"].dropna().unique().tolist()
+        exp_list.sort()
+        nearest_exp = exp_list[0]
+        
+        nifty_exp = nifty[nifty["expiry"] == nearest_exp]
+
+        # 3. Find ATM Strike
+        spot_price = 0
+        index_data = df[
+            (df["segment"] == "INDEX") & 
+            (df["exchange"] == "NSE") & 
+            (df["tradingsymbol"].str.startswith(symbol))
+        ]
+        
+        if not index_data.empty:
+            index_token = str(index_data.iloc[0][token_col])
+            try:
+                quote_res = mconnect_obj.get_quotes([index_token]) 
+                if quote_res.status_code == 200:
+                    quote_json = quote_res.json()
+                    # Handle nested structure or list
+                    q_data_list = quote_json.get('data', quote_json) if isinstance(quote_json, dict) else quote_json
+                    if isinstance(q_data_list, list) and len(q_data_list) > 0:
+                         spot_price = float(q_data_list[0].get('ltp', 0))
+            except Exception as e:
+                logging.warning(f"Could not fetch spot price: {e}")
+        
+        if spot_price == 0:
+            all_strikes = nifty_exp["strike"].unique()
+            if len(all_strikes) > 0:
+                spot_price = (min(all_strikes) + max(all_strikes)) / 2
+            else:
+                return jsonify({"error": "No strikes found for calculation"})
+
+        strike_interval = 50 
+        if symbol == "BANKNIFTY": strike_interval = 100
+        
+        atm_strike = round(spot_price / strike_interval) * strike_interval
+        
+        lower_strike = atm_strike - (strike_range_count * strike_interval)
+        upper_strike = atm_strike + (strike_range_count * strike_interval)
+
+        strike_range_df = nifty_exp[
+            (nifty_exp["strike"] >= lower_strike) &
+            (nifty_exp["strike"] <= upper_strike)
+        ]
+
+        # 5. Separate CE and PE
+        if "option_type" in strike_range_df.columns:
+            ce_options = strike_range_df[strike_range_df["option_type"] == "CE"]
+            pe_options = strike_range_df[strike_range_df["option_type"] == "PE"]
+        else:
+            ce_options = strike_range_df[strike_range_df["tradingsymbol"].str.endswith("CE")]
+            pe_options = strike_range_df[strike_range_df["tradingsymbol"].str.endswith("PE")]
+
+        # 6. Get Tokens for Live Data using the detected column
+        all_tokens = ce_options[token_col].tolist() + pe_options[token_col].tolist()
+        
+        price_map = {}
+        
+        try:
+            if all_tokens:
+                quote_res = mconnect_obj.get_quotes(all_tokens)
+                if quote_res.status_code == 200:
+                    q_data = quote_res.json()
+                    # Robust extraction of list from response
+                    q_list = q_data.get('data', q_data) if isinstance(q_data, dict) else q_data
+                    
+                    if isinstance(q_list, list) and len(q_list) > 0:
+                        # DETECT THE TOKEN KEY IN THE RESPONSE DYNAMICALLY
+                        # Because the response key might differ from the CSV column name
+                        sample_item = q_list[0]
+                        response_token_key = None
+                        
+                        # Try common keys first
+                        for k in ['symboltoken', 'instrument_token', 'token', 'SymbolToken', 'Token']:
+                            if k in sample_item:
+                                response_token_key = k
+                                break
+                        
+                        # Fallback: Heuristic matching if key name not obvious
+                        if not response_token_key:
+                             # Check if any value in the item matches one of the tokens we requested
+                             for k, v in sample_item.items():
+                                 if str(v) in all_tokens:
+                                     response_token_key = k
+                                     break
+                        
+                        if response_token_key:
+                            for item in q_list:
+                                tk = str(item.get(response_token_key))
+                                # Only process if we found a token that matches our request
+                                if tk in all_tokens:
+                                    ltp = item.get('ltp', 0)
+                                    oi = item.get('oi', 0)
+                                    # Try multiple variations of OI Change keys
+                                    oi_chng = item.get('change_oi') or item.get('changeinopeninterest') or item.get('oi_chng') or 0
+                                    price_map[tk] = {'ltp': ltp, 'oi': oi, 'oi_chng': oi_chng}
+                        else:
+                            logging.error(f"Option Chain Error: Could not identify token key in quote response. Available keys: {sample_item.keys()}")
+        except Exception as e:
+            logging.error(f"Error fetching option quotes: {e}")
+
+        # 8. Merge Data
+        response_data = []
+        
+        ce_options = ce_options.sort_values('strike')
+        pe_options = pe_options.sort_values('strike')
+
+        for strike in sorted(strike_range_df['strike'].unique()):
+            row = {'strike': strike}
+            
+            # Get CE Data
+            ce_row = ce_options[ce_options['strike'] == strike]
+            if not ce_row.empty:
+                ce_token = str(ce_row.iloc[0][token_col])
+                ce_info = price_map.get(ce_token, {})
+                row['ce_ltp'] = ce_info.get('ltp', 0)
+                row['ce_oi'] = ce_info.get('oi', 0)
+                row['ce_oi_chng'] = ce_info.get('oi_chng', 0)
+            else:
+                row['ce_ltp'] = 0
+                row['ce_oi'] = 0
+                row['ce_oi_chng'] = 0
+
+            # Get PE Data
+            pe_row = pe_options[pe_options['strike'] == strike]
+            if not pe_row.empty:
+                pe_token = str(pe_row.iloc[0][token_col])
+                pe_info = price_map.get(pe_token, {})
+                row['pe_ltp'] = pe_info.get('ltp', 0)
+                row['pe_oi'] = pe_info.get('oi', 0)
+                row['pe_oi_chng'] = pe_info.get('oi_chng', 0)
+            else:
+                row['pe_ltp'] = 0
+                row['pe_oi'] = 0
+                row['pe_oi_chng'] = 0
+            
+            response_data.append(row)
+
+        return jsonify(response_data)
+
+    except Exception as e:
+        logging.exception("Option Chain Error")
+        return jsonify({"error": str(e)})
+
 @app.route("/api/place_order", methods=["POST"])
 def place_order():
     if 'logged_in' not in session or 'sid' not in session:
         return jsonify({"error": "Not logged in"})
 
     sid = session['sid']
-    mconnect_obj = ACTIVE_SESSIONS.get(sid)
-
-    if not mconnect_obj:
-        return jsonify({"error": "Session expired. Please login again."})
+    session_data = ACTIVE_SESSIONS.get(sid)
+    if not session_data: return jsonify({"error": "Session expired"})
+    
+    mconnect_obj = session_data['mconnect']
 
     try:
         req_data = request.json
-        
-        # Using SDK place_order method
         res = mconnect_obj.place_order(
             tradingsymbol=req_data.get('tradingsymbol'),
             exchange=req_data.get('exchange'),
@@ -553,3 +892,4 @@ def place_order():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+```
