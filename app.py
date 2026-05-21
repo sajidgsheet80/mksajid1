@@ -330,6 +330,7 @@ value="NIFTY25N1124500CE"
 <select id="po_otype">
 <option value="MARKET">MARKET</option>
 <option value="LIMIT">LIMIT</option>
+<option value="SL">SL</option>
 </select>
 
 </div>
@@ -688,8 +689,6 @@ def login():
 
         session['sid'] = sid
 
-        # DOWNLOAD INSTRUMENTS
-
         logging.info("Downloading instruments...")
 
         inst_res = mconnect_obj.get_instruments()
@@ -697,8 +696,6 @@ def login():
         csv_data = io.BytesIO(inst_res)
 
         df = pd.read_csv(csv_data)
-
-        logging.info(f"Columns: {df.columns.tolist()}")
 
         ACTIVE_SESSIONS[sid] = {
 
@@ -873,22 +870,10 @@ def place_order():
             req_data.get('price')
         )
 
-        # MARKET ORDER FIX
-
         if order_type == "MARKET":
             price = "0"
 
-        logging.info("===== PLACE ORDER =====")
-
-        logging.info(
-            f"Symbol: {tradingsymbol}"
-        )
-
-        logging.info(
-            f"Exchange: {exchange}"
-        )
-
-        # CORRECT SDK CALL
+        # FULL SDK CALL
 
         res = m.place_order(
 
@@ -906,10 +891,18 @@ def place_order():
 
             _validity=validity,
 
-            _price=price
+            _price=price,
+
+            _variety="NORMAL",
+
+            _trigger_price="0",
+
+            _disclosed_quantity="0",
+
+            _tag="FLASK_ORDER"
         )
 
-        logging.info(f"Raw Response: {res}")
+        logging.info(f"Order Response: {res}")
 
         # HANDLE RESPONSE
 
