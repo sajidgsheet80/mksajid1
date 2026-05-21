@@ -1,8 +1,4 @@
-The issue is likely occurring because the `get_quotes` API response does not match the hardcoded key `symboltoken` used in your code. Different broker APIs (or different versions of the wrapper) use different keys for the token identifier (e.g., `instrument_token`, `token`, `SymbolToken`). If the key doesn't match, the code fails to map the prices back to the options, resulting in empty data or zeros, making it appear as if the option chain is "not displaying."
 
-Here is the corrected code. I have updated the **Option Chain API route** to dynamically detect the correct token key and improved the error handling.
-
-```python
 import logging
 import uuid
 import io
@@ -892,4 +888,4 @@ def place_order():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-```
+
