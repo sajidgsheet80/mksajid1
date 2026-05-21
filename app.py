@@ -19,124 +19,126 @@ from flask import (
 from tradingapi_a.mconnect import MConnect
 
 # =========================================================
-# CONFIGURATION
+# CONFIG
 # =========================================================
 
 app = Flask(__name__)
 
-# Better Secret Key
-app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))
+app.secret_key = os.getenv(
+    "SECRET_KEY",
+    secrets.token_hex(32)
+)
 
-# Hardcoded API Key
 API_KEY = "CJOHJvQ/lUBtRZSXIVAtd3wkLRaSDpVGbO92K+FAIo8="
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 # =========================================================
-# SESSION STORE
+# MEMORY SESSION STORE
 # =========================================================
 
 ACTIVE_SESSIONS = {}
 
 # =========================================================
-# HTML TEMPLATE
+# HTML
 # =========================================================
 
 HTML_TEMPLATE = """
+
 <!DOCTYPE html>
 <html>
+
 <head>
-    <title>m.Stock Trading Dashboard</title>
 
-    <style>
-        body {
-            font-family: Arial;
-            background: #f0f2f5;
-            padding: 20px;
-        }
+<title>m.Stock Dashboard</title>
 
-        .container {
-            max-width: 1200px;
-            margin: auto;
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-        }
+<style>
 
-        h2 {
-            text-align: center;
-        }
+body{
+    font-family:Arial;
+    background:#f0f2f5;
+    padding:20px;
+}
 
-        input, select {
-            width: 100%;
-            padding: 10px;
-            margin-top: 5px;
-            margin-bottom: 10px;
-        }
+.container{
+    max-width:1200px;
+    margin:auto;
+    background:white;
+    padding:20px;
+    border-radius:10px;
+}
 
-        button {
-            padding: 12px;
-            border: none;
-            cursor: pointer;
-            border-radius: 5px;
-        }
+input,select{
+    width:100%;
+    padding:10px;
+    margin-top:5px;
+    margin-bottom:10px;
+}
 
-        .btn-primary {
-            background: #007bff;
-            color: white;
-        }
+button{
+    padding:12px;
+    border:none;
+    cursor:pointer;
+    border-radius:5px;
+}
 
-        .btn-place {
-            background: green;
-            color: white;
-            width: 100%;
-            font-size: 18px;
-        }
+.btn{
+    background:#007bff;
+    color:white;
+}
 
-        .tabs {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
+.btn-place{
+    background:green;
+    color:white;
+    width:100%;
+}
 
-        .tab-btn {
-            background: #eee;
-        }
+.tabs{
+    display:flex;
+    gap:10px;
+    margin-bottom:20px;
+}
 
-        .tab-btn.active {
-            background: #007bff;
-            color: white;
-        }
+.tab-btn{
+    background:#ddd;
+}
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
+.active{
+    background:#007bff;
+    color:white;
+}
 
-        th, td {
-            padding: 10px;
-            border-bottom: 1px solid #ddd;
-            text-align: center;
-        }
+table{
+    width:100%;
+    border-collapse:collapse;
+}
 
-        .hidden {
-            display: none;
-        }
+th,td{
+    padding:10px;
+    border-bottom:1px solid #ddd;
+    text-align:center;
+}
 
-        .error {
-            color: red;
-        }
+.hidden{
+    display:none;
+}
 
-        .success {
-            color: green;
-        }
+.error{
+    color:red;
+}
 
-        .order-form-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-    </style>
+.success{
+    color:green;
+}
+
+.grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:15px;
+}
+
+</style>
+
 </head>
 
 <body>
@@ -145,21 +147,28 @@ HTML_TEMPLATE = """
 
 <div class="container" style="max-width:400px;">
 
-    <h2>m.Stock Login</h2>
+<h2>m.Stock Login</h2>
 
-    <form method="POST" action="/login">
+<form method="POST" action="/login">
 
-        <input type="text" name="totp" placeholder="Enter OTP" required>
+<input
+type="text"
+name="totp"
+placeholder="Enter OTP"
+required
+>
 
-        <button class="btn-primary" type="submit">
-            Login
-        </button>
+<button class="btn" type="submit">
+Login
+</button>
 
-    </form>
+</form>
 
-    {% if error %}
-        <div class="error">{{ error }}</div>
-    {% endif %}
+{% if error %}
+<div class="error">
+{{ error }}
+</div>
+{% endif %}
 
 </div>
 
@@ -167,181 +176,220 @@ HTML_TEMPLATE = """
 
 <div class="container">
 
-    <div style="display:flex;justify-content:space-between;align-items:center;">
+<div style="display:flex;justify-content:space-between;">
 
-        <h2>Trading Dashboard</h2>
+<h2>Trading Dashboard</h2>
 
-        <form action="/logout" method="POST">
-            <button type="submit">
-                Logout
-            </button>
-        </form>
+<form method="POST" action="/logout">
+<button type="submit">
+Logout
+</button>
+</form>
 
-    </div>
+</div>
 
-    <div class="tabs">
+<div class="tabs">
 
-        <button class="tab-btn active" id="btn-positions"
-            onclick="switchTab('positions')">
-            Positions
-        </button>
+<button
+class="tab-btn active"
+id="btn-positions"
+onclick="switchTab('positions')">
+Positions
+</button>
 
-        <button class="tab-btn" id="btn-orders"
-            onclick="switchTab('orders')">
-            Orders
-        </button>
+<button
+class="tab-btn"
+id="btn-orders"
+onclick="switchTab('orders')">
+Orders
+</button>
 
-        <button class="tab-btn" id="btn-trades"
-            onclick="switchTab('trades')">
-            Trades
-        </button>
+<button
+class="tab-btn"
+id="btn-trades"
+onclick="switchTab('trades')">
+Trades
+</button>
 
-        <button class="tab-btn" id="btn-place"
-            onclick="switchTab('place')">
-            Place Order
-        </button>
+<button
+class="tab-btn"
+id="btn-place"
+onclick="switchTab('place')">
+Place Order
+</button>
 
-    </div>
+</div>
 
-    <div id="loading">
-        Loading...
-    </div>
+<div id="loading">
+Loading...
+</div>
 
-    <!-- POSITIONS -->
+<!-- POSITIONS -->
 
-    <table id="position-table" class="hidden">
+<table id="position-table" class="hidden">
 
-        <thead>
-            <tr>
-                <th>Symbol</th>
-                <th>Qty</th>
-                <th>Avg</th>
-                <th>LTP</th>
-                <th>P&L</th>
-            </tr>
-        </thead>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Qty</th>
+<th>Avg</th>
+<th>LTP</th>
+<th>P&L</th>
+</tr>
+</thead>
 
-        <tbody id="position-body"></tbody>
+<tbody id="position-body"></tbody>
 
-    </table>
+</table>
 
-    <!-- ORDERS -->
+<!-- ORDERS -->
 
-    <table id="order-table" class="hidden">
+<table id="order-table" class="hidden">
 
-        <thead>
-            <tr>
-                <th>Order ID</th>
-                <th>Symbol</th>
-                <th>Type</th>
-                <th>Qty</th>
-                <th>Status</th>
-            </tr>
-        </thead>
+<thead>
+<tr>
+<th>Order ID</th>
+<th>Symbol</th>
+<th>Type</th>
+<th>Qty</th>
+<th>Status</th>
+</tr>
+</thead>
 
-        <tbody id="order-body"></tbody>
+<tbody id="order-body"></tbody>
 
-    </table>
+</table>
 
-    <!-- TRADES -->
+<!-- TRADES -->
 
-    <table id="trade-table" class="hidden">
+<table id="trade-table" class="hidden">
 
-        <thead>
-            <tr>
-                <th>Trade ID</th>
-                <th>Order ID</th>
-                <th>Symbol</th>
-                <th>Qty</th>
-                <th>Price</th>
-            </tr>
-        </thead>
+<thead>
+<tr>
+<th>Trade ID</th>
+<th>Order ID</th>
+<th>Symbol</th>
+<th>Qty</th>
+<th>Price</th>
+</tr>
+</thead>
 
-        <tbody id="trade-body"></tbody>
+<tbody id="trade-body"></tbody>
 
-    </table>
+</table>
 
-    <!-- PLACE ORDER -->
+<!-- PLACE ORDER -->
 
-    <div id="place-section" class="hidden">
+<div id="place-section" class="hidden">
 
-        <h3>Place Order</h3>
+<h3>Place Order</h3>
 
-        <div id="order-msg"></div>
+<div id="order-msg"></div>
 
-        <div class="order-form-grid">
+<div class="grid">
 
-            <div>
-                <label>Symbol</label>
-                <input type="text" id="po_symbol"
-                    value="NIFTY25N1124500CE">
-            </div>
+<div>
 
-            <div>
-                <label>Exchange</label>
+<label>Trading Symbol</label>
 
-                <select id="po_exchange">
-                    <option value="NFO">NFO</option>
-                    <option value="NSE">NSE</option>
-                </select>
-            </div>
+<input
+type="text"
+id="po_symbol"
+value="NIFTY25N1124500CE"
+>
 
-            <div>
-                <label>Transaction</label>
+</div>
 
-                <select id="po_ttype">
-                    <option value="BUY">BUY</option>
-                    <option value="SELL">SELL</option>
-                </select>
-            </div>
+<div>
 
-            <div>
-                <label>Order Type</label>
+<label>Exchange</label>
 
-                <select id="po_otype">
-                    <option value="MARKET">MARKET</option>
-                    <option value="LIMIT">LIMIT</option>
-                </select>
-            </div>
+<select id="po_exchange">
+<option value="NFO">NFO</option>
+<option value="NSE">NSE</option>
+<option value="BSE">BSE</option>
+</select>
 
-            <div>
-                <label>Qty</label>
+</div>
 
-                <input type="number" id="po_qty" value="50">
-            </div>
+<div>
 
-            <div>
-                <label>Price</label>
+<label>Transaction Type</label>
 
-                <input type="number" id="po_price" value="0">
-            </div>
+<select id="po_ttype">
+<option value="BUY">BUY</option>
+<option value="SELL">SELL</option>
+</select>
 
-            <div>
-                <label>Product</label>
+</div>
 
-                <select id="po_product">
-                    <option value="MIS">MIS</option>
-                    <option value="NRML">NRML</option>
-                </select>
-            </div>
+<div>
 
-            <div>
-                <label>Validity</label>
+<label>Order Type</label>
 
-                <select id="po_validity">
-                    <option value="DAY">DAY</option>
-                    <option value="IOC">IOC</option>
-                </select>
-            </div>
+<select id="po_otype">
+<option value="MARKET">MARKET</option>
+<option value="LIMIT">LIMIT</option>
+</select>
 
-        </div>
+</div>
 
-        <button class="btn-place"
-            onclick="placeOrder()">
-            PLACE ORDER
-        </button>
+<div>
 
-    </div>
+<label>Quantity</label>
+
+<input
+type="number"
+id="po_qty"
+value="50"
+>
+
+</div>
+
+<div>
+
+<label>Price</label>
+
+<input
+type="number"
+id="po_price"
+value="0"
+>
+
+</div>
+
+<div>
+
+<label>Product</label>
+
+<select id="po_product">
+<option value="MIS">MIS</option>
+<option value="NRML">NRML</option>
+<option value="CNC">CNC</option>
+</select>
+
+</div>
+
+<div>
+
+<label>Validity</label>
+
+<select id="po_validity">
+<option value="DAY">DAY</option>
+<option value="IOC">IOC</option>
+</select>
+
+</div>
+
+</div>
+
+<button
+class="btn-place"
+onclick="placeOrder()">
+PLACE ORDER
+</button>
+
+</div>
 
 </div>
 
@@ -351,46 +399,50 @@ HTML_TEMPLATE = """
 
 let currentTab = 'positions';
 
-function switchTab(tab) {
+function switchTab(tab){
 
     currentTab = tab;
 
-    document.querySelectorAll('.tab-btn').forEach(
-        x => x.classList.remove('active')
-    );
+    document.querySelectorAll('.tab-btn')
+    .forEach(btn => btn.classList.remove('active'));
 
     document.getElementById('btn-' + tab)
-        .classList.add('active');
+    .classList.add('active');
 
     document.getElementById('position-table')
-        .classList.add('hidden');
+    .classList.add('hidden');
 
     document.getElementById('order-table')
-        .classList.add('hidden');
+    .classList.add('hidden');
 
     document.getElementById('trade-table')
-        .classList.add('hidden');
+    .classList.add('hidden');
 
     document.getElementById('place-section')
-        .classList.add('hidden');
+    .classList.add('hidden');
 
-    if(tab === 'positions')
+    if(tab === 'positions'){
         fetchPositions();
+    }
 
-    else if(tab === 'orders')
+    else if(tab === 'orders'){
         fetchOrders();
+    }
 
-    else if(tab === 'trades')
+    else if(tab === 'trades'){
         fetchTrades();
+    }
 
-    else if(tab === 'place')
+    else if(tab === 'place'){
         document.getElementById('place-section')
-            .classList.remove('hidden');
+        .classList.remove('hidden');
+    }
 }
 
-async function fetchPositions() {
+async function fetchPositions(){
 
     const res = await fetch('/api/positions');
+
     const data = await res.json();
 
     const body = document.getElementById('position-body');
@@ -398,34 +450,37 @@ async function fetchPositions() {
     body.innerHTML = '';
 
     document.getElementById('loading')
-        .classList.add('hidden');
+    .classList.add('hidden');
 
     document.getElementById('position-table')
-        .classList.remove('hidden');
+    .classList.remove('hidden');
 
     data.forEach(pos => {
 
         const qty = parseFloat(pos.quantity || 0);
+
         const avg = parseFloat(pos.avg_price || 0);
+
         const ltp = parseFloat(pos.ltp || 0);
 
         const pnl = qty * (ltp - avg);
 
         body.innerHTML += `
         <tr>
-            <td>${pos.trading_symbol || '-'}</td>
-            <td>${qty}</td>
-            <td>${avg}</td>
-            <td>${ltp}</td>
-            <td>${pnl.toFixed(2)}</td>
+        <td>${pos.trading_symbol || '-'}</td>
+        <td>${qty}</td>
+        <td>${avg}</td>
+        <td>${ltp}</td>
+        <td>${pnl.toFixed(2)}</td>
         </tr>
         `;
     });
 }
 
-async function fetchOrders() {
+async function fetchOrders(){
 
     const res = await fetch('/api/order_book');
+
     const data = await res.json();
 
     const body = document.getElementById('order-body');
@@ -433,28 +488,29 @@ async function fetchOrders() {
     body.innerHTML = '';
 
     document.getElementById('loading')
-        .classList.add('hidden');
+    .classList.add('hidden');
 
     document.getElementById('order-table')
-        .classList.remove('hidden');
+    .classList.remove('hidden');
 
-    data.forEach(o => {
+    data.forEach(order => {
 
         body.innerHTML += `
         <tr>
-            <td>${o.order_id || '-'}</td>
-            <td>${o.trading_symbol || '-'}</td>
-            <td>${o.transaction_type || '-'}</td>
-            <td>${o.quantity || 0}</td>
-            <td>${o.status || '-'}</td>
+        <td>${order.order_id || '-'}</td>
+        <td>${order.trading_symbol || '-'}</td>
+        <td>${order.transaction_type || '-'}</td>
+        <td>${order.quantity || 0}</td>
+        <td>${order.status || '-'}</td>
         </tr>
         `;
     });
 }
 
-async function fetchTrades() {
+async function fetchTrades(){
 
     const res = await fetch('/api/trade_book');
+
     const data = await res.json();
 
     const body = document.getElementById('trade-body');
@@ -462,80 +518,84 @@ async function fetchTrades() {
     body.innerHTML = '';
 
     document.getElementById('loading')
-        .classList.add('hidden');
+    .classList.add('hidden');
 
     document.getElementById('trade-table')
-        .classList.remove('hidden');
+    .classList.remove('hidden');
 
-    data.forEach(t => {
+    data.forEach(trade => {
 
         body.innerHTML += `
         <tr>
-            <td>${t.trade_id || '-'}</td>
-            <td>${t.order_id || '-'}</td>
-            <td>${t.trading_symbol || '-'}</td>
-            <td>${t.quantity || 0}</td>
-            <td>${t.price || 0}</td>
+        <td>${trade.trade_id || '-'}</td>
+        <td>${trade.order_id || '-'}</td>
+        <td>${trade.trading_symbol || '-'}</td>
+        <td>${trade.quantity || 0}</td>
+        <td>${trade.price || 0}</td>
         </tr>
         `;
     });
 }
 
-async function placeOrder() {
+async function placeOrder(){
 
     const payload = {
 
         tradingsymbol:
-            document.getElementById('po_symbol').value,
+        document.getElementById('po_symbol').value,
 
         exchange:
-            document.getElementById('po_exchange').value,
+        document.getElementById('po_exchange').value,
 
         transaction_type:
-            document.getElementById('po_ttype').value,
+        document.getElementById('po_ttype').value,
 
         order_type:
-            document.getElementById('po_otype').value,
+        document.getElementById('po_otype').value,
 
         quantity:
-            parseInt(document.getElementById('po_qty').value),
+        parseInt(
+            document.getElementById('po_qty').value
+        ),
 
         product:
-            document.getElementById('po_product').value,
+        document.getElementById('po_product').value,
 
         validity:
-            document.getElementById('po_validity').value,
+        document.getElementById('po_validity').value,
 
         price:
-            parseFloat(document.getElementById('po_price').value)
+        parseFloat(
+            document.getElementById('po_price').value
+        )
     };
 
-    const res = await fetch('/api/place_order', {
+    const res = await fetch('/api/place_order',{
 
-        method: 'POST',
+        method:'POST',
 
-        headers: {
-            'Content-Type': 'application/json'
+        headers:{
+            'Content-Type':'application/json'
         },
 
-        body: JSON.stringify(payload)
+        body:JSON.stringify(payload)
     });
 
     const data = await res.json();
 
     const msg = document.getElementById('order-msg');
 
-    if(data.status === 'success') {
+    if(data.status === 'success'){
 
         msg.innerHTML =
-            "<span class='success'>Order Placed</span>";
+        "<span class='success'>Order Placed Successfully</span>";
 
-    } else {
+    }else{
 
         msg.innerHTML =
-            "<span class='error'>" +
-            JSON.stringify(data) +
-            "</span>";
+        "<span class='error'>" +
+        JSON.stringify(data) +
+        "</span>";
     }
 }
 
@@ -545,16 +605,19 @@ fetchPositions();
 
 setInterval(() => {
 
-    if(currentTab === 'positions')
+    if(currentTab === 'positions'){
         fetchPositions();
+    }
 
-    else if(currentTab === 'orders')
+    else if(currentTab === 'orders'){
         fetchOrders();
+    }
 
-    else if(currentTab === 'trades')
+    else if(currentTab === 'trades'){
         fetchTrades();
+    }
 
-}, 3000);
+},3000);
 
 {% endif %}
 
@@ -562,17 +625,18 @@ setInterval(() => {
 
 </body>
 </html>
+
 """
 
 # =========================================================
-# ROUTES
+# INDEX
 # =========================================================
 
 @app.route("/")
 def index():
+
     return render_template_string(
-        HTML_TEMPLATE,
-        api_key=API_KEY
+        HTML_TEMPLATE
     )
 
 # =========================================================
@@ -588,13 +652,14 @@ def login():
 
         return render_template_string(
             HTML_TEMPLATE,
-            error="OTP Required",
-            api_key=API_KEY
+            error="OTP Required"
         )
 
     try:
 
         mconnect_obj = MConnect()
+
+        logging.info("Verifying OTP...")
 
         res = mconnect_obj.verify_totp(
             API_KEY,
@@ -605,8 +670,7 @@ def login():
 
             return render_template_string(
                 HTML_TEMPLATE,
-                error=f"HTTP {res.status_code}",
-                api_key=API_KEY
+                error=f"HTTP {res.status_code}"
             )
 
         data = res.json()
@@ -615,8 +679,7 @@ def login():
 
             return render_template_string(
                 HTML_TEMPLATE,
-                error=data.get("message"),
-                api_key=API_KEY
+                error=data.get("message")
             )
 
         session['logged_in'] = True
@@ -624,6 +687,8 @@ def login():
         sid = str(uuid.uuid4())
 
         session['sid'] = sid
+
+        # DOWNLOAD INSTRUMENTS
 
         logging.info("Downloading instruments...")
 
@@ -633,61 +698,12 @@ def login():
 
         df = pd.read_csv(csv_data)
 
-        # DETECT TOKEN COLUMN
-
-        token_col = None
-
-        for col in [
-            "token",
-            "symboltoken",
-            "instrument_token",
-            "instrumenttoken"
-        ]:
-
-            if col in df.columns:
-                token_col = col
-                break
-
-        # DETECT SYMBOL COLUMN
-
-        symbol_col = None
-
-        for col in [
-            "tradingsymbol",
-            "trading_symbol",
-            "symbol",
-            "tsym"
-        ]:
-
-            if col in df.columns:
-                symbol_col = col
-                break
-
-        if not token_col:
-
-            return render_template_string(
-                HTML_TEMPLATE,
-                error="Token column not found",
-                api_key=API_KEY
-            )
-
-        if not symbol_col:
-
-            return render_template_string(
-                HTML_TEMPLATE,
-                error="Symbol column not found",
-                api_key=API_KEY
-            )
-
-        logging.info(f"Token Column: {token_col}")
-        logging.info(f"Symbol Column: {symbol_col}")
+        logging.info(f"Columns: {df.columns.tolist()}")
 
         ACTIVE_SESSIONS[sid] = {
 
             "mconnect": mconnect_obj,
-            "instruments": df,
-            "token_col": token_col,
-            "symbol_col": symbol_col
+            "instruments": df
         }
 
         return redirect(url_for("index"))
@@ -698,8 +714,7 @@ def login():
 
         return render_template_string(
             HTML_TEMPLATE,
-            error=str(e),
-            api_key=API_KEY
+            error=str(e)
         )
 
 # =========================================================
@@ -709,14 +724,14 @@ def login():
 @app.route("/logout", methods=["POST"])
 def logout():
 
-    sid = session.get("sid")
+    sid = session.get('sid')
 
     if sid in ACTIVE_SESSIONS:
         del ACTIVE_SESSIONS[sid]
 
     session.clear()
 
-    return redirect(url_for("index"))
+    return redirect(url_for('index'))
 
 # =========================================================
 # POSITIONS
@@ -725,20 +740,26 @@ def logout():
 @app.route("/api/positions")
 def positions():
 
-    if 'sid' not in session:
-        return jsonify([])
-
-    m = ACTIVE_SESSIONS[session['sid']]['mconnect']
-
     try:
+
+        if 'sid' not in session:
+            return jsonify([])
+
+        m = ACTIVE_SESSIONS[
+            session['sid']
+        ]['mconnect']
 
         res = m.get_net_position()
 
-        return jsonify(res.json().get('data', []))
+        data = res.json()
+
+        return jsonify(data.get('data', []))
 
     except Exception as e:
 
-        return jsonify({"error": str(e)})
+        return jsonify({
+            "error": str(e)
+        })
 
 # =========================================================
 # ORDER BOOK
@@ -747,20 +768,26 @@ def positions():
 @app.route("/api/order_book")
 def order_book():
 
-    if 'sid' not in session:
-        return jsonify([])
-
-    m = ACTIVE_SESSIONS[session['sid']]['mconnect']
-
     try:
+
+        if 'sid' not in session:
+            return jsonify([])
+
+        m = ACTIVE_SESSIONS[
+            session['sid']
+        ]['mconnect']
 
         res = m.get_order_book()
 
-        return jsonify(res.json().get('data', []))
+        data = res.json()
+
+        return jsonify(data.get('data', []))
 
     except Exception as e:
 
-        return jsonify({"error": str(e)})
+        return jsonify({
+            "error": str(e)
+        })
 
 # =========================================================
 # TRADE BOOK
@@ -769,20 +796,26 @@ def order_book():
 @app.route("/api/trade_book")
 def trade_book():
 
-    if 'sid' not in session:
-        return jsonify([])
-
-    m = ACTIVE_SESSIONS[session['sid']]['mconnect']
-
     try:
+
+        if 'sid' not in session:
+            return jsonify([])
+
+        m = ACTIVE_SESSIONS[
+            session['sid']
+        ]['mconnect']
 
         res = m.get_trade_book()
 
-        return jsonify(res.json().get('data', []))
+        data = res.json()
+
+        return jsonify(data.get('data', []))
 
     except Exception as e:
 
-        return jsonify({"error": str(e)})
+        return jsonify({
+            "error": str(e)
+        })
 
 # =========================================================
 # PLACE ORDER
@@ -791,7 +824,7 @@ def trade_book():
 @app.route("/api/place_order", methods=["POST"])
 def place_order():
 
-    if 'sid' not in session:
+    if 'logged_in' not in session:
 
         return jsonify({
             "status": "error",
@@ -800,95 +833,125 @@ def place_order():
 
     try:
 
-        session_data = ACTIVE_SESSIONS[session['sid']]
+        sid = session['sid']
+
+        session_data = ACTIVE_SESSIONS[sid]
 
         m = session_data['mconnect']
 
-        df = session_data['instruments']
-
-        token_col = session_data['token_col']
-
-        symbol_col = session_data['symbol_col']
-
         req_data = request.json
 
-        symbol = req_data.get('tradingsymbol')
-
-        # FIND TOKEN
-
-        row = df[
-            df[symbol_col].astype(str) == str(symbol)
-        ]
-
-        if row.empty:
-
-            return jsonify({
-                "status": "error",
-                "message": "Symbol not found"
-            })
-
-        symbol_token = str(
-            row.iloc[0][token_col]
+        tradingsymbol = req_data.get(
+            'tradingsymbol'
         )
 
-        logging.info(f"Found token: {symbol_token}")
+        exchange = req_data.get(
+            'exchange'
+        )
 
-        # SDK PARAMS
+        transaction_type = req_data.get(
+            'transaction_type'
+        )
+
+        order_type = req_data.get(
+            'order_type'
+        )
+
+        quantity = str(
+            req_data.get('quantity')
+        )
+
+        product = req_data.get(
+            'product'
+        )
+
+        validity = req_data.get(
+            'validity'
+        )
+
+        price = str(
+            req_data.get('price')
+        )
+
+        # MARKET ORDER FIX
+
+        if order_type == "MARKET":
+            price = "0"
+
+        logging.info("===== PLACE ORDER =====")
+
+        logging.info(
+            f"Symbol: {tradingsymbol}"
+        )
+
+        logging.info(
+            f"Exchange: {exchange}"
+        )
+
+        # CORRECT SDK CALL
 
         res = m.place_order(
 
-            _tradingsymbol=symbol,
+            _tradingsymbol=tradingsymbol,
 
-            _symboltoken=symbol_token,
+            _exchange=exchange,
 
-            _exchange=req_data.get('exchange'),
+            _transaction_type=transaction_type,
 
-            _transaction_type=req_data.get(
-                'transaction_type'
-            ),
+            _order_type=order_type,
 
-            _order_type=req_data.get('order_type'),
+            _quantity=quantity,
 
-            _quantity=str(req_data.get('quantity')),
+            _product=product,
 
-            _product=req_data.get('product'),
+            _validity=validity,
 
-            _validity=req_data.get('validity'),
-
-            _price=str(req_data.get('price'))
+            _price=price
         )
 
-        logging.info(f"Order Response: {res}")
+        logging.info(f"Raw Response: {res}")
 
         # HANDLE RESPONSE
+
+        if hasattr(res, 'json'):
+
+            try:
+
+                return jsonify(
+                    res.json()
+                )
+
+            except Exception as e:
+
+                return jsonify({
+
+                    "status":"error",
+
+                    "message":str(e)
+                })
 
         if isinstance(res, dict):
 
             return jsonify(res)
 
-        if hasattr(res, 'json'):
-
-            try:
-                return jsonify(res.json())
-
-            except:
-                return jsonify({
-                    "status": "success",
-                    "data": str(res)
-                })
-
         return jsonify({
-            "status": "success",
-            "data": str(res)
+
+            "status":"success",
+
+            "data":str(res)
         })
 
     except Exception as e:
 
-        logging.exception("Place Order Error")
+        logging.exception(
+            "Place Order Error"
+        )
 
         return jsonify({
-            "status": "error",
-            "message": str(e)
+
+            "status":"error",
+
+            "message":str(e)
         })
 
 # =========================================================
