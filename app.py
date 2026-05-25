@@ -1,5 +1,5 @@
 
-from flask import Flask, request, render_template_string, jsonify
+from flask import Flask, request, render_template_string, jsonify, redirect, url_for
 import requests
 import hashlib
 import os
@@ -8,9 +8,9 @@ import time
 app = Flask(__name__)
 app.secret_key = "single_user_terminal_key"
 
-# ===== Hardcoded Configuration =====
-MSTOCK_API_KEY = CJOHJvQ/lUBtRZSXIVAtd3wkLRaSDpVGbO92K+FAIo8='  # Replace with your actual mStock API Key
+# ===== Configuration =====
 MSTOCK_API_SECRET = 'CJOHJvQ/lUBtRZSXIVAtd3wkLRaSDpVGbO92K+FAIo8='
+MSTOCK_KEY_FILE = "mstock_key.txt"
 
 # Global mStock session for single user
 mstock_session = {
@@ -23,20 +23,37 @@ mstock_session = {
 # Server-side deduplication cache
 order_request_cache = {}
 
+# Initialize key file
+if not os.path.exists(MSTOCK_KEY_FILE):
+    with open(MSTOCK_KEY_FILE, 'w') as f:
+        f.write("")
+
+def get_mstock_key():
+    if os.path.exists(MSTOCK_KEY_FILE):
+        with open(MSTOCK_KEY_FILE, 'r') as f:
+            return f.read().strip()
+    return ""
+
+def save_mstock_key(key):
+    with open(MSTOCK_KEY_FILE, 'w') as f:
+        f.write(key.strip())
+
 # ===== mStock Authentication Routes =====
 
 @app.route("/mstock/login", methods=["POST"])
 def login_mstock():
-    if not MSTOCK_API_KEY or MSTOCK_API_KEY == '<PASTE_YOUR_API_KEY_HERE>':
-        return jsonify({"status": "error", "message": "API Key not configured in script."}), 400
+    api_key = get_mstock_key()
+    
+    if not api_key:
+        return jsonify({"status": "error", "message": "mStock API key not configured."}), 400
     
     totp = request.json.get("totp", "").strip()
     if not totp:
         return jsonify({"status": "error", "message": "OTP is required"}), 400
     
-    checksum = hashlib.sha256(f"{MSTOCK_API_KEY}{totp}{MSTOCK_API_SECRET}".encode()).hexdigest()
+    checksum = hashlib.sha256(f"{api_key}{totp}{MSTOCK_API_SECRET}".encode()).hexdigest()
     headers = {'X-Mirae-Version': '1', 'Content-Type': 'application/x-www-form-urlencoded'}
-    data = {'api_key': MSTOCK_API_KEY, 'totp': totp, 'checksum': checksum}
+    data = {'api_key': api_key, 'totp': totp, 'checksum': checksum}
     
     try:
         response = requests.post(
@@ -91,6 +108,7 @@ def logout_mstock():
 
 @app.route("/place_order", methods=["POST"])
 def place_manual_order():
+    api_key = get_mstock_key()
     access_token = mstock_session.get('access_token')
     
     if not access_token:
@@ -144,7 +162,7 @@ def place_manual_order():
     try:
         headers = {
             'X-Mirae-Version': '1',
-            'Authorization': f'token {MSTOCK_API_KEY}:{access_token}',
+            'Authorization': f'token {api_key}:{access_token}',
             'Content-Type': 'application/x-www-form-urlencoded',
         }
         
@@ -186,11 +204,49 @@ def place_manual_order():
 
 # ---- General Routes ----
 
+@app.route("/setup_credentials", methods=["GET", "POST"])
+def setup_credentials():
+    if request.method == "POST":
+        mstock_api_key = request.form.get("mstock_api_key")
+        if mstock_api_key:
+            save_mstock_key(mstock_api_key)
+            return redirect(url_for('index'))
+    return render_template_string(CREDENTIALS_TEMPLATE, mstock_api_key=get_mstock_key())
+
 @app.route("/", methods=["GET"])
 def index():
-    return render_template_string(DASHBOARD_TEMPLATE)
+    return render_template_string(DASHBOARD_TEMPLATE, has_api_key=bool(get_mstock_key()))
 
-# ===== HTML Template =====
+# ===== HTML Templates =====
+
+CREDENTIALS_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Setup mStock</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; padding: 40px; display: flex; justify-content: center; }
+        .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 500px; }
+        h2 { color: #333; margin-bottom: 20px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
+        input { width: 100%; padding: 10px; margin-bottom: 20px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #218838; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Setup mStock Credentials</h2>
+        <p style="color:#666; font-size:14px; margin-bottom:20px;">Enter your mStock API Key.</p>
+        <form method="POST">
+            <label>mStock API Key</label>
+            <input type="text" name="mstock_api_key" value="{{ mstock_api_key }}" placeholder="e.g. 7x9..." required>
+            <button type="submit">Save & Continue</button>
+        </form>
+    </div>
+</body>
+</html>
+"""
 
 DASHBOARD_TEMPLATE = """
 <!DOCTYPE html>
@@ -216,6 +272,8 @@ DASHBOARD_TEMPLATE = """
         header { background-color: var(--bg-card); padding: 15px 30px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
         .brand { font-size: 1.2rem; font-weight: bold; display: flex; align-items: center; gap: 10px; }
         .brand span { color: var(--accent); }
+        .nav-links a { color: var(--text-muted); text-decoration: none; margin-left: 20px; font-size: 0.9rem; transition: color 0.2s; }
+        .nav-links a:hover { color: var(--text-main); }
         main { flex: 1; padding: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 30px; max-width: 1400px; margin: 0 auto; width: 100%; }
         @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
         .card { background-color: var(--bg-card); border-radius: 12px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; flex-direction: column; }
@@ -265,6 +323,9 @@ DASHBOARD_TEMPLATE = """
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
             mStock <span>Manual Terminal</span>
         </div>
+        <div class="nav-links">
+            <a href="/setup_credentials">Settings</a>
+        </div>
     </header>
 
     <main>
@@ -277,6 +338,9 @@ DASHBOARD_TEMPLATE = """
                         <span class="status-indicator" id="auth-dot"></span>
                         <span class="status-text" id="auth-text">Checking...</span>
                     </div>
+                    {% if not has_api_key %}
+                        <a href="/setup_credentials" style="color: var(--danger); font-size: 0.8rem; text-decoration: none;">API Key Missing</a>
+                    {% endif %}
                 </div>
                 <div id="otp-area" class="otp-form" style="display: none;">
                     <label>Enter OTP (mStock)</label>
@@ -367,9 +431,9 @@ DASHBOARD_TEMPLATE = """
             <div style="margin-top: 20px; font-size: 0.85rem; color: #666; line-height: 1.5;">
                 <strong>Instructions:</strong>
                 <ul style="margin-left: 20px; margin-top: 5px;">
+                    <li>Ensure mStock API Key is set in <a href="/setup_credentials" style="color: var(--primary);">Settings</a>.</li>
                     <li>Authenticate using the OTP sent to your registered mobile/email.</li>
                     <li>Enter the correct Trading Symbol (e.g., RELIANCE, INFY, NIFTY25JAN24500CE).</li>
-                    <li>Select Intraday (MIS) or Delivery (NRML).</li>
                 </ul>
             </div>
         </section>
@@ -620,8 +684,9 @@ DASHBOARD_TEMPLATE = """
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print("\n" + "="*60)
-    print("mStock Manual Trading Terminal (Hardcoded)")
+    print("mStock Manual Trading Terminal (Single User)")
     print("="*60)
     print(f"Server: http://127.0.0.1:{port}")
+    print(f"API Key stored in: {MSTOCK_KEY_FILE}")
     print("="*60 + "\n")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
