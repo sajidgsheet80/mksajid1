@@ -9,7 +9,7 @@ app = Flask(__name__)
 app.secret_key = "single_user_terminal_key"
 
 # ===== Hardcoded Configuration =====
-MSTOCK_API_KEY = '<PASTE_YOUR_API_KEY_HERE>'  # Replace with your actual mStock API Key
+MSTOCK_API_KEY = CJOHJvQ/lUBtRZSXIVAtd3wkLRaSDpVGbO92K+FAIo8='  # Replace with your actual mStock API Key
 MSTOCK_API_SECRET = 'CJOHJvQ/lUBtRZSXIVAtd3wkLRaSDpVGbO92K+FAIo8='
 
 # Global mStock session for single user
