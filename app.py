@@ -1,4 +1,3 @@
-
 from flask import Flask, request, render_template_string, jsonify, redirect, url_for
 import requests
 import hashlib
@@ -9,7 +8,7 @@ app = Flask(__name__)
 app.secret_key = "single_user_terminal_key"
 
 # ===== Configuration =====
-MSTOCK_API_SECRET = 'CJOHJvQ/lUBtRZSXIVAtd3wkLRaSDpVGbO92K+FAIo8='
+MSTOCK_API_SECRET = '<your_api_secret_here>'
 MSTOCK_KEY_FILE = "mstock_key.txt"
 
 # Global mStock session for single user
