@@ -1,58 +1,117 @@
-from flask import Flask, request, render_template_string, jsonify, redirect, url_for
+from flask import Flask, request, render_template_string, jsonify, redirect, url_for, session
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 import requests
 import hashlib
 import os
 import time
 
 app = Flask(__name__)
-app.secret_key = "single_user_terminal_key"
+app.secret_key = "sajid_secret_key_change_this"
 
 # ===== Configuration =====
 MSTOCK_API_SECRET = '<your_api_secret_here>'
-MSTOCK_KEY_FILE = "mstock_key.txt"
 
-# Global mStock session for single user
-mstock_session = {
-    'access_token': None,
-    'access_token_expiry': None,
-    'refresh_token': None,
-    'refresh_token_expiry': None
-}
+USERS_FILE = "users.txt"
+CREDENTIALS_FILE = "user_credentials.txt"
 
-# Server-side deduplication cache
-order_request_cache = {}
+def init_files():
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'w') as f:
+            f.write("")
+    if not os.path.exists(CREDENTIALS_FILE):
+        with open(CREDENTIALS_FILE, 'w') as f:
+            f.write("")
 
-# Initialize key file
-if not os.path.exists(MSTOCK_KEY_FILE):
-    with open(MSTOCK_KEY_FILE, 'w') as f:
-        f.write("")
+init_files()
 
-def get_mstock_key():
-    if os.path.exists(MSTOCK_KEY_FILE):
-        with open(MSTOCK_KEY_FILE, 'r') as f:
-            return f.read().strip()
-    return ""
+def save_user(username, password, email):
+    with open(USERS_FILE, 'a') as f:
+        hashed_pw = generate_password_hash(password)
+        f.write(f"{username}|{hashed_pw}|{email}\n")
 
-def save_mstock_key(key):
-    with open(MSTOCK_KEY_FILE, 'w') as f:
-        f.write(key.strip())
+def get_user(username):
+    if not os.path.exists(USERS_FILE):
+        return None
+    with open(USERS_FILE, 'r') as f:
+        for line in f:
+            if line.strip():
+                parts = line.strip().split('|')
+                if len(parts) >= 3 and parts[0] == username:
+                    return {'username': parts[0], 'password': parts[1], 'email': parts[2]}
+    return None
 
-# ===== mStock Authentication Routes =====
+def verify_user(username, password):
+    user = get_user(username)
+    if user and check_password_hash(user['password'], password):
+        return user
+    return None
+
+def save_user_credentials(username, mstock_api_key=None):
+    credentials = {}
+    if os.path.exists(CREDENTIALS_FILE):
+        with open(CREDENTIALS_FILE, 'r') as f:
+            for line in f:
+                if line.strip():
+                    parts = line.strip().split('|')
+                    if len(parts) >= 2:
+                        credentials[parts[0]] = {'mstock_api_key': parts[1]}
+    if username not in credentials:
+        credentials[username] = {'mstock_api_key': ''}
+    if mstock_api_key:
+        credentials[username]['mstock_api_key'] = mstock_api_key
+    with open(CREDENTIALS_FILE, 'w') as f:
+        for user, creds in credentials.items():
+            f.write(f"{user}|{creds['mstock_api_key']}\n")
+
+def get_user_credentials(username):
+    if not os.path.exists(CREDENTIALS_FILE):
+        return None
+    with open(CREDENTIALS_FILE, 'r') as f:
+        for line in f:
+            if line.strip():
+                parts = line.strip().split('|')
+                if len(parts) >= 2 and parts[0] == username:
+                    return {'mstock_api_key': parts[1]}
+    return None
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'username' not in session:
+            return redirect(url_for('login_page'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+user_sessions = {}
+
+def get_user_session(username):
+    if username not in user_sessions:
+        user_sessions[username] = {
+            'mstock_access_token': None,
+            'mstock_access_token_expiry': None,
+            'mstock_refresh_token': None,
+            'mstock_refresh_token_expiry': None
+        }
+    return user_sessions[username]
 
 @app.route("/mstock/login", methods=["POST"])
+@login_required
 def login_mstock():
-    api_key = get_mstock_key()
+    username = session['username']
+    user_sess = get_user_session(username)
+    creds = get_user_credentials(username)
     
-    if not api_key:
+    if not creds or not creds['mstock_api_key']:
         return jsonify({"status": "error", "message": "mStock API key not configured."}), 400
     
     totp = request.json.get("totp", "").strip()
     if not totp:
         return jsonify({"status": "error", "message": "OTP is required"}), 400
     
-    checksum = hashlib.sha256(f"{api_key}{totp}{MSTOCK_API_SECRET}".encode()).hexdigest()
+    checksum = hashlib.sha256(f"{creds['mstock_api_key']}{totp}{MSTOCK_API_SECRET}".encode()).hexdigest()
     headers = {'X-Mirae-Version': '1', 'Content-Type': 'application/x-www-form-urlencoded'}
-    data = {'api_key': api_key, 'totp': totp, 'checksum': checksum}
+    data = {'api_key': creds['mstock_api_key'], 'totp': totp, 'checksum': checksum}
     
     try:
         response = requests.post(
@@ -63,17 +122,21 @@ def login_mstock():
         resp_json = response.json()
         
         if resp_json.get("status") == "success":
-            mstock_session['access_token'] = resp_json["data"]["access_token"]
-            mstock_session['access_token_expiry'] = time.time() + resp_json["data"].get("expires_in", 3600)
+            access_token = resp_json["data"]["access_token"]
+            access_token_expiry = time.time() + resp_json["data"].get("expires_in", 3600)
+            user_sess['mstock_access_token'] = access_token
+            user_sess['mstock_access_token_expiry'] = access_token_expiry
             
             if "refresh_token" in resp_json["data"]:
-                mstock_session['refresh_token'] = resp_json["data"]["refresh_token"]
-                mstock_session['refresh_token_expiry'] = time.time() + resp_json["data"].get("refresh_token_expires_in", 86400)
+                refresh_token = resp_json["data"]["refresh_token"]
+                refresh_token_expiry = time.time() + resp_json["data"].get("refresh_token_expires_in", 86400)
+                user_sess['mstock_refresh_token'] = refresh_token
+                user_sess['mstock_refresh_token_expiry'] = refresh_token_expiry
                 
             return jsonify({
                 "status": "success",
                 "message": "mStock Authentication successful",
-                "access_token": mstock_session['access_token']
+                "access_token": access_token
             })
         else:
             return jsonify({
@@ -87,28 +150,39 @@ def login_mstock():
         }), 500
 
 @app.route("/mstock/status", methods=["GET"])
+@login_required
 def mstock_status():
-    access_token = mstock_session.get('access_token')
+    username = session['username']
+    user_sess = get_user_session(username)
+    access_token = user_sess.get('mstock_access_token')
     
-    if access_token and mstock_session.get('access_token_expiry', 0) > time.time():
+    if access_token and user_sess.get('mstock_access_token_expiry', 0) > time.time():
         return jsonify({"status": "authenticated"})
     else:
         return jsonify({"status": "not_authenticated"})
 
 @app.route("/mstock/logout", methods=["POST"])
+@login_required
 def logout_mstock():
-    mstock_session['access_token'] = None
-    mstock_session['access_token_expiry'] = None
-    mstock_session['refresh_token'] = None
-    mstock_session['refresh_token_expiry'] = None
+    username = session['username']
+    user_sess = get_user_session(username)
+    user_sess['mstock_access_token'] = None
+    user_sess['mstock_access_token_expiry'] = None
+    user_sess['mstock_refresh_token'] = None
+    user_sess['mstock_refresh_token_expiry'] = None
     return jsonify({"status": "success", "message": "Logged out"})
 
-# ===== Manual Order Placement with Deduplication =====
+# ✅ FIXED: Added request deduplication with unique request ID
+order_request_cache = {}
 
 @app.route("/place_order", methods=["POST"])
+@login_required
 def place_manual_order():
-    api_key = get_mstock_key()
-    access_token = mstock_session.get('access_token')
+    """Handles Manual Order Placement via mStock with deduplication"""
+    username = session['username']
+    user_sess = get_user_session(username)
+    creds = get_user_credentials(username)
+    access_token = user_sess.get('mstock_access_token')
     
     if not access_token:
         return jsonify({
@@ -116,12 +190,13 @@ def place_manual_order():
             "message": "mStock not authenticated. Please login with OTP."
         }), 403
 
-    # DEDUPLICATION CHECK: Prevent duplicate requests
+    # ✅ DEDUPLICATION CHECK: Prevent duplicate requests
     request_id = request.headers.get('X-Request-ID', '')
     if request_id:
         current_time = time.time()
         if request_id in order_request_cache:
-            if current_time - order_request_cache[request_id] < 5: 
+            cached_time = order_request_cache[request_id]
+            if current_time - cached_time < 5:  # 5 second window
                 return jsonify({
                     "status": "error",
                     "message": "Duplicate request detected. Please wait.",
@@ -161,7 +236,7 @@ def place_manual_order():
     try:
         headers = {
             'X-Mirae-Version': '1',
-            'Authorization': f'token {api_key}:{access_token}',
+            'Authorization': f'token {creds["mstock_api_key"]}:{access_token}',
             'Content-Type': 'application/x-www-form-urlencoded',
         }
         
@@ -191,6 +266,7 @@ def place_manual_order():
             return jsonify({
                 "status": "error",
                 "message": f"Order Failed: {error_msg}",
+                "broker_response": resp_json,
                 "side": transaction_type,
                 "symbol": symbol
             }), 400
@@ -201,22 +277,127 @@ def place_manual_order():
             "message": f"Connection Error: {str(e)}"
         }), 500
 
-# ---- General Routes ----
+@app.route('/sp', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        username = request.form.get("username")
+        password = request.form.get("password")
+        email = request.form.get("email")
+        if not username or not password or not email:
+            return render_template_string(SIGNUP_TEMPLATE, error="All fields are required!")
+        if get_user(username):
+            return render_template_string(SIGNUP_TEMPLATE, error="Username already exists!")
+        save_user(username, password, email)
+        return redirect(url_for('login_page'))
+    return render_template_string(SIGNUP_TEMPLATE)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login_page():
+    if request.method == 'POST':
+        username = request.form.get("username")
+        password = request.form.get("password")
+        user = verify_user(username, password)
+        if user:
+            session['username'] = user['username']
+            return redirect(url_for('index'))
+        else:
+            return render_template_string(LOGIN_TEMPLATE, error="Invalid credentials!")
+    return render_template_string(LOGIN_TEMPLATE)
+
+@app.route('/logout')
+def logout():
+    username = session.get('username')
+    if username:
+        user_sessions[username]['mstock_access_token'] = None
+    session.clear()
+    return redirect(url_for('login_page'))
 
 @app.route("/setup_credentials", methods=["GET", "POST"])
+@login_required
 def setup_credentials():
+    username = session['username']
+    creds = get_user_credentials(username)
     if request.method == "POST":
         mstock_api_key = request.form.get("mstock_api_key")
         if mstock_api_key:
-            save_mstock_key(mstock_api_key)
+            save_user_credentials(username, mstock_api_key=mstock_api_key)
             return redirect(url_for('index'))
-    return render_template_string(CREDENTIALS_TEMPLATE, mstock_api_key=get_mstock_key())
+    return render_template_string(CREDENTIALS_TEMPLATE,
+                                   mstock_api_key=creds['mstock_api_key'] if creds else "")
 
 @app.route("/", methods=["GET"])
+@login_required
 def index():
-    return render_template_string(DASHBOARD_TEMPLATE, has_api_key=bool(get_mstock_key()))
+    username = session['username']
+    creds = get_user_credentials(username)
+    return render_template_string(DASHBOARD_TEMPLATE, username=username, has_api_key=bool(creds and creds.get('mstock_api_key')))
 
 # ===== HTML Templates =====
+
+SIGNUP_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sign Up</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 350px; }
+        h2 { text-align: center; color: #333; margin-bottom: 20px; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #0056b3; }
+        .error { color: red; text-align: center; margin-bottom: 15px; font-size: 14px; }
+        .link { text-align: center; margin-top: 20px; font-size: 14px; }
+        a { color: #007bff; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Create Account</h2>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        <form method="POST">
+            <input type="text" name="username" placeholder="Username" required>
+            <input type="email" name="email" placeholder="Email" required>
+            <input type="password" name="password" placeholder="Password" minlength="6" required>
+            <button type="submit">Sign Up</button>
+        </form>
+        <div class="link">Already have an account? <a href="/login">Login</a></div>
+    </div>
+</body>
+</html>
+"""
+
+LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 350px; }
+        h2 { text-align: center; color: #333; margin-bottom: 20px; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #0056b3; }
+        .error { color: red; text-align: center; margin-bottom: 15px; font-size: 14px; }
+        .link { text-align: center; margin-top: 20px; font-size: 14px; }
+        a { color: #007bff; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Login</h2>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        <form method="POST">
+            <input type="text" name="username" placeholder="Username" required>
+            <input type="password" name="password" placeholder="Password" required>
+            <button type="submit">Login</button>
+        </form>
+        <div class="link">Don't have an account? Contact Admin.</div>
+    </div>
+</body>
+</html>
+"""
 
 CREDENTIALS_TEMPLATE = """
 <!DOCTYPE html>
@@ -236,7 +417,7 @@ CREDENTIALS_TEMPLATE = """
 <body>
     <div class="card">
         <h2>Setup mStock Credentials</h2>
-        <p style="color:#666; font-size:14px; margin-bottom:20px;">Enter your mStock API Key.</p>
+        <p style="color:#666; font-size:14px; margin-bottom:20px;">Enter your mStock API Key. The API Secret is hardcoded in the server configuration.</p>
         <form method="POST">
             <label>mStock API Key</label>
             <input type="text" name="mstock_api_key" value="{{ mstock_api_key }}" placeholder="e.g. 7x9..." required>
@@ -247,6 +428,7 @@ CREDENTIALS_TEMPLATE = """
 </html>
 """
 
+# ✅ FIXED DASHBOARD TEMPLATE
 DASHBOARD_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -273,6 +455,7 @@ DASHBOARD_TEMPLATE = """
         .brand span { color: var(--accent); }
         .nav-links a { color: var(--text-muted); text-decoration: none; margin-left: 20px; font-size: 0.9rem; transition: color 0.2s; }
         .nav-links a:hover { color: var(--text-main); }
+        .user-badge { background: #333; padding: 5px 12px; border-radius: 20px; font-size: 0.85rem; }
         main { flex: 1; padding: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 30px; max-width: 1400px; margin: 0 auto; width: 100%; }
         @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
         .card { background-color: var(--bg-card); border-radius: 12px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; flex-direction: column; }
@@ -292,11 +475,16 @@ DASHBOARD_TEMPLATE = """
         .btn-primary { background: var(--primary); color: white; }
         .btn-buy { background: var(--accent); color: #000; }
         .btn-sell { background: var(--danger); color: white; }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-muted); margin-top: 10px; }
+        .btn-outline:hover { border-color: var(--text-main); color: var(--text-main); }
+        
+        /* ✅ CRITICAL FIX: Block clicks at CSS level when disabled */
         .btn.disabled, .btn:disabled {
             opacity: 0.5 !important;
             cursor: not-allowed !important;
             pointer-events: none !important;
         }
+        
         .toggle-container { display: flex; background: var(--bg-input); border-radius: 6px; padding: 4px; margin-bottom: 15px; }
         .toggle-option { flex: 1; text-align: center; padding: 10px; cursor: pointer; border-radius: 4px; transition: 0.3s; font-weight: 600; font-size: 0.9rem; }
         .toggle-option.active-buy { background: var(--accent); color: black; }
@@ -323,7 +511,9 @@ DASHBOARD_TEMPLATE = """
             mStock <span>Manual Terminal</span>
         </div>
         <div class="nav-links">
+            <span class="user-badge">{{ username }}</span>
             <a href="/setup_credentials">Settings</a>
+            <a href="/logout">Logout</a>
         </div>
     </header>
 
@@ -338,7 +528,7 @@ DASHBOARD_TEMPLATE = """
                         <span class="status-text" id="auth-text">Checking...</span>
                     </div>
                     {% if not has_api_key %}
-                        <a href="/setup_credentials" style="color: var(--danger); font-size: 0.8rem; text-decoration: none;">API Key Missing</a>
+                        <a href="/setup_credentials" style="color: var(--danger); font-size: 0.8rem; text-decoration: none;">⚠️ API Key Missing</a>
                     {% endif %}
                 </div>
                 <div id="otp-area" class="otp-form" style="display: none;">
@@ -353,7 +543,9 @@ DASHBOARD_TEMPLATE = """
 
             <hr style="border: 0; border-top: 1px solid var(--border); margin: 20px 0;">
 
+            <!-- ✅ FIX 1: Added onsubmit="return false;" to completely prevent form submission -->
             <form id="order-form" onsubmit="return false;">
+                
                 <div class="form-group">
                     <label>Symbol (Trading Symbol)</label>
                     <input type="text" id="symbol" name="symbol" placeholder="e.g. NIFTY25JAN24500CE" required value="NIFTY25JAN24500CE">
@@ -415,6 +607,7 @@ DASHBOARD_TEMPLATE = """
                     <input type="number" id="price" name="price" step="0.05" value="0">
                 </div>
 
+                <!-- ✅ FIX 2: Removed onclick, will use addEventListener -->
                 <button type="button" id="submit-btn" class="btn btn-buy">PLACE BUY ORDER</button>
             </form>
         </section>
@@ -433,6 +626,7 @@ DASHBOARD_TEMPLATE = """
                     <li>Ensure mStock API Key is set in <a href="/setup_credentials" style="color: var(--primary);">Settings</a>.</li>
                     <li>Authenticate using the OTP sent to your registered mobile/email.</li>
                     <li>Enter the correct Trading Symbol (e.g., RELIANCE, INFY, NIFTY25JAN24500CE).</li>
+                    <li>Select Intraday (MIS) or Delivery (NRML).</li>
                 </ul>
             </div>
         </section>
@@ -441,15 +635,19 @@ DASHBOARD_TEMPLATE = """
     <div id="toast">Message here</div>
 
     <script>
+        // ✅ FIX 3: Multiple layers of protection against double submission
+        
         let currentSide = 'BUY';
         let isSubmitting = false;
         let lastClickTime = 0;
-        const MIN_CLICK_INTERVAL = 2000;
+        const MIN_CLICK_INTERVAL = 2000; // 2 seconds minimum between clicks
         
+        // ✅ FIX 4: Generate unique request ID for deduplication
         function generateRequestId() {
             return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
         }
 
+        // --- Authentication Logic ---
         async function checkAuthStatus() {
             try {
                 const res = await fetch('/mstock/status');
@@ -518,6 +716,7 @@ DASHBOARD_TEMPLATE = """
             }
         }
 
+        // --- UI Logic ---
         function setSide(side) {
             currentSide = side;
             document.getElementById('side').value = side;
@@ -538,24 +737,30 @@ DASHBOARD_TEMPLATE = """
             }
         }
 
+        // --- Order Logic with Triple Protection ---
         async function placeOrder() {
+            // ✅ PROTECTION LAYER 1: Timestamp-based throttle
             const now = Date.now();
             if (now - lastClickTime < MIN_CLICK_INTERVAL) {
+                console.log("Click throttled. Too fast.");
                 showToast('Please wait before clicking again', 'error');
                 return;
             }
             lastClickTime = now;
 
+            // ✅ PROTECTION LAYER 2: State lock check
             if (isSubmitting) {
+                console.log("Request already in progress. Ignoring.");
                 return;
             }
 
+            // ✅ PROTECTION LAYER 3: Immediate button disable + CSS block
             isSubmitting = true;
             const btn = document.getElementById('submit-btn');
             const originalText = btn.innerText;
             
             btn.disabled = true;
-            btn.classList.add('disabled');
+            btn.classList.add('disabled'); // This adds pointer-events: none via CSS
             btn.innerText = "PROCESSING...";
 
             const requestId = generateRequestId();
@@ -575,7 +780,7 @@ DASHBOARD_TEMPLATE = """
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/json',
-                        'X-Request-ID': requestId
+                        'X-Request-ID': requestId  // ✅ Send unique ID for server-side dedup
                     },
                     body: JSON.stringify(formData)
                 });
@@ -585,34 +790,45 @@ DASHBOARD_TEMPLATE = """
                     addLog('ORDER', `${data.side} ${data.symbol} Qty: ${data.quantity} - ID: ${data.order_id}`, 'success');
                     showToast('Order Placed Successfully!', 'success');
                 } else {
-                    addLog('ERROR', `${formData.side} ${formData.symbol} - ${data.message}`, 'error');
+                    addLog('ERROR', `${data.side || formData.side} ${formData.symbol} - ${data.message}`, 'error');
                     showToast('Order Failed: ' + data.message, 'error');
                 }
             } catch (err) {
                 addLog('ERROR', 'Network Error: ' + err.message, 'error');
                 showToast('Network Error', 'error');
             } finally {
+                // ✅ Add delay before re-enabling to prevent rapid re-clicks
                 setTimeout(() => {
                     isSubmitting = false;
                     btn.disabled = false;
                     btn.classList.remove('disabled');
                     btn.innerText = originalText;
-                }, 1500);
+                }, 1500); // 1.5 second cooldown
             }
         }
 
+        // --- Logger ---
         function addLog(tag, message, type) {
             const container = document.getElementById('log-container');
             const time = new Date().toLocaleTimeString();
+            
             const div = document.createElement('div');
             div.className = 'log-entry';
+            
             let colorClass = 'log-info';
             if (type === 'success') colorClass = 'log-success';
             if (type === 'error') colorClass = 'log-error';
-            div.innerHTML = `<span class="log-time">[${time}]</span><strong>${tag}:</strong> <span class="${colorClass}">${message}</span>`;
+
+            div.innerHTML = `
+                <span class="log-time">[${time}]</span>
+                <strong>${tag}:</strong>
+                <span class="${colorClass}">${message}</span>
+            `;
+            
             container.insertBefore(div, container.firstChild);
         }
 
+        // --- Toast Notification ---
         function showToast(message, type) {
             const toast = document.getElementById("toast");
             toast.innerText = message;
@@ -620,7 +836,11 @@ DASHBOARD_TEMPLATE = """
             setTimeout(function(){ toast.className = toast.className.replace("show", ""); }, 3000);
         }
 
+        // ✅ FIX 5: Use addEventListener instead of inline onclick
+        // This ensures only ONE event handler is attached
         document.addEventListener('DOMContentLoaded', function() {
+            
+            // Order button - with all event prevention
             const submitBtn = document.getElementById('submit-btn');
             submitBtn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -629,10 +849,12 @@ DASHBOARD_TEMPLATE = """
                 placeOrder();
             });
             
+            // Prevent any other click handlers on the button
             submitBtn.addEventListener('click', function(e) {
                 e.stopImmediatePropagation();
-            }, true);
+            }, true); // Capture phase
 
+            // Side toggle buttons
             document.getElementById('opt-buy').addEventListener('click', function(e) {
                 e.preventDefault();
                 setSide('BUY');
@@ -643,10 +865,12 @@ DASHBOARD_TEMPLATE = """
                 setSide('SELL');
             });
 
+            // Order type change
             document.getElementById('order_type').addEventListener('change', function() {
                 const type = this.value;
                 const priceGroup = document.getElementById('price-group');
                 const priceInput = document.getElementById('price');
+                
                 if (type === 'LIMIT') {
                     priceGroup.style.display = 'block';
                     priceInput.required = true;
@@ -659,12 +883,14 @@ DASHBOARD_TEMPLATE = """
                 }
             });
 
+            // OTP button
             document.getElementById('otp-btn').addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
                 authenticate();
             });
 
+            // Prevent form submission by any means
             document.getElementById('order-form').addEventListener('submit', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -672,8 +898,11 @@ DASHBOARD_TEMPLATE = """
                 return false;
             }, true);
 
+            // Initialize
             checkAuthStatus();
             setInterval(checkAuthStatus, 60000);
+            
+            addLog('System', 'Terminal initialized with double-click protection.', 'info');
         });
     </script>
 </body>
@@ -683,9 +912,10 @@ DASHBOARD_TEMPLATE = """
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print("\n" + "="*60)
-    print("mStock Manual Trading Terminal (Single User)")
+    print("🚀 mStock Manual Trading Terminal")
     print("="*60)
-    print(f"Server: http://127.0.0.1:{port}")
-    print(f"API Key stored in: {MSTOCK_KEY_FILE}")
+    print(f"📍 Server: http://127.0.0.1:{port}")
+    print("📝 Users stored in: users.txt")
+    print("🔑 Credentials stored in: user_credentials.txt")
     print("="*60 + "\n")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
